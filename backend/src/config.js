@@ -30,6 +30,22 @@ const EnvSchema = z.object({
   BCRYPT_ROUNDS: z.coerce.number().int().min(4).max(15).default(10),
   MAX_TRANSFER_PAISE: z.coerce.number().int().positive().default(20_000_000),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+
+  // ---- Nambikai ----------------------------------------------------------
+  // Every one of these is optional or defaulted on purpose. scripts/init-env.js
+  // never overwrites an existing backend/.env, so a developer who set the file up
+  // before Nambikai existed has none of these keys. A required var here would make
+  // the whole wallet refuse to boot on their machine.
+  ANTHROPIC_API_KEY: z
+    .string()
+    .trim()
+    .optional()
+    .transform((v) => (v ? v : undefined)),
+  NAMBIKAI_AI_MODEL: z.string().trim().default('claude-opus-5'),
+  NAMBIKAI_AI_MAX_TOKENS: z.coerce.number().int().min(256).max(8000).default(1500),
+  NAMBIKAI_AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(20000),
+  NAMBIKAI_ENGINE_VERSION: z.string().trim().default('nbk-1.0.0'),
+  NAMBIKAI_SCORE_TTL_MINUTES: z.coerce.number().int().min(1).default(360),
 });
 
 const parsed = EnvSchema.safeParse(process.env);
@@ -70,6 +86,17 @@ export const config = {
     signupBonusPaise: env.SIGNUP_BONUS_PAISE,
     maxTransferPaise: env.MAX_TRANSFER_PAISE,
     minTransferPaise: 100, // Rs 1.00
+  },
+  nambikai: {
+    // The demo is fully functional without an API key: the AI layer falls back to
+    // deterministic templates. A key only upgrades the prose, never the numbers.
+    aiEnabled: Boolean(env.ANTHROPIC_API_KEY),
+    anthropicApiKey: env.ANTHROPIC_API_KEY,
+    model: env.NAMBIKAI_AI_MODEL,
+    maxTokens: env.NAMBIKAI_AI_MAX_TOKENS,
+    timeoutMs: env.NAMBIKAI_AI_TIMEOUT_MS,
+    engineVersion: env.NAMBIKAI_ENGINE_VERSION,
+    scoreTtlMinutes: env.NAMBIKAI_SCORE_TTL_MINUTES,
   },
 };
 

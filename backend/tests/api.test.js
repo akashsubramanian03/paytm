@@ -29,8 +29,22 @@ function resetTestDatabase() {
   }
   const env = { ...process.env, DATABASE_URL: 'file:./test.db' };
   const prismaBin = path.join(BACKEND_ROOT, 'node_modules', '.bin', 'prisma');
-  execFileSync(prismaBin, ['migrate', 'deploy'], { cwd: BACKEND_ROOT, env, stdio: 'pipe' });
-  execFileSync(process.execPath, ['prisma/seed.js'], { cwd: BACKEND_ROOT, env, stdio: 'pipe' });
+
+  // stdio is piped so a clean run stays quiet, but on failure the child's output
+  // is re-printed. Without this a seed that throws (e.g. the negative-balance
+  // guard) fails every test in the suite with an opaque execFileSync error and
+  // no indication of the actual cause.
+  const run = (file, args) => {
+    try {
+      execFileSync(file, args, { cwd: BACKEND_ROOT, env, stdio: 'pipe' });
+    } catch (err) {
+      const out = `${err.stdout ?? ''}${err.stderr ?? ''}`.trim();
+      throw new Error(`Test database setup failed: ${file} ${args.join(' ')}\n${out}`);
+    }
+  };
+
+  run(prismaBin, ['migrate', 'deploy']);
+  run(process.execPath, ['prisma/seed.js']);
 }
 
 before(async () => {

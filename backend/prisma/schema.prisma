@@ -23,9 +23,19 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  account      Account?
-  sessions     Session[]
-  entries      LedgerEntry[]
+  account  Account?
+  sessions Session[]
+  entries  LedgerEntry[]
+
+  // Nambikai back-relations. These are Prisma's non-owning sides, so they add
+  // no column to the User table — the generated migration must contain no
+  // ALTER TABLE "User".
+  groupsCreated  Group[]               @relation("GroupsCreated")
+  memberships    GroupMember[]         @relation("GroupMemberships")
+  contributions  Contribution[]        @relation("Contributions")
+  consents       ConsentRecord[]       @relation("Consents")
+  clusterAppeals ClusterSignalAppeal[] @relation("ClusterAppeals")
+  businesses     Business[]            @relation("Businesses")
 
   @@index([firstName])
   @@index([lastName])
@@ -56,14 +66,14 @@ model Session {
 /// A peer-to-peer transfer writes TWO rows (sender DEBIT + receiver CREDIT)
 /// sharing the same referenceId, inside one database transaction.
 model LedgerEntry {
-  id                String   @id @default(cuid())
-  referenceId       String
-  userId            String
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String @id @default(cuid())
+  referenceId String
+  userId      String
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   direction         String // DEBIT | CREDIT
   category          String // TRANSFER | ADD_MONEY | RECHARGE | BILL_PAYMENT
-  status            String   @default("SUCCESS") // SUCCESS | FAILED
+  status            String @default("SUCCESS") // SUCCESS | FAILED
   amountPaise       Int
   balanceAfterPaise Int
 
@@ -75,6 +85,10 @@ model LedgerEntry {
   note      String?
   metadata  String? // JSON string: recharge plan, masked card, biller details
   createdAt DateTime @default(now())
+
+  /// Non-owning side: Contribution holds the foreign key, so this adds no column.
+  /// A group contribution is an ordinary TRANSFER row that a Contribution points at.
+  contribution Contribution?
 
   @@index([userId, createdAt])
   @@index([referenceId])
@@ -106,4 +120,349 @@ model Biller {
   isActive Boolean @default(true)
 
   @@index([category])
+}
+
+// ===========================================================================
+// NAMBIKAI — trust / alternative-credit layer
+// ===========================================================================
+// Read backend/src/nambikai/README.md before changing anything below.
+//
+// Conventions carried over from the wallet models above:
+//   - cuid() ids, String "enums" with the allowed values in a trailing comment
+//   - all money is an integer number of PAISE
+//   - all scored values are integer BASIS POINTS (0..10000), never floats,
+//     so the engine is bit-reproducible across machines
+//
+// Nothing here adds a column to User, Account or LedgerEntry. The relation
+// fields added to those models are Prisma's non-owning sides, which emit no SQL.
+
+/// A savings circle / rotating-savings group ("chit"-like).
+///
+/// NAMBIKAI HOLDS NO MONEY AND RUNS NO AUCTION. A Group is a bookkeeping record:
+/// contributions are ordinary peer-to-peer wallet transfers between members,
+/// written by lib/wallet.js like any other transfer. The payout/auction step is
+/// deliberately NOT executed here — see GET /groups/:id/payout-cycle, which
+/// reports what would be routed to a registered chit operator and does nothing.
+model Group {
+  id                String   @id @default(cuid())
+  name              String
+  purpose           String // SAVINGS | ROTATING_SAVINGS | EMERGENCY_FUND | BUSINESS_POOL
+  cadence           String // WEEKLY | MONTHLY
+  contributionPaise Int // expected contribution per member per cycle
+  plannedCycles     Int      @default(0) // 0 = open-ended
+  startedAt         DateTime
+  status            String   @default("ACTIVE") // ACTIVE | COMPLETED | DISSOLVED
+  createdById       String
+  createdBy         User     @relation("GroupsCreated", fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  members       GroupMember[]
+  contributions Contribution[]
+
+  @@index([status])
+  @@index([createdById])
+}
+
+model GroupMember {
+  id          String    @id @default(cuid())
+  groupId     String
+  group       Group     @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation("GroupMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  role        String    @default("MEMBER") // ADMIN | MEMBER
+  payoutOrder Int? // position in the rotation; null for pure savings groups
+  status      String    @default("ACTIVE") // ACTIVE | EXITED | REMOVED
+  joinedAt    DateTime  @default(now())
+  exitedAt    DateTime?
+
+  @@unique([groupId, userId])
+  @@index([userId, status])
+}
+
+/// One expected contribution, for one member, in one cycle.
+///
+/// A Contribution NEVER MOVES MONEY. It annotates a LedgerEntry that a real
+/// wallet.js transfer already created: PAID rows point at the DEBIT leg through
+/// ledgerEntryId, and amountPaidPaise must equal that entry's amountPaise.
+/// PENDING and MISSED rows carry ledgerEntryId = null and move nothing — which
+/// is exactly why a missed contribution is safe to model and is the signal the
+/// behaviour engine most needs.
+model Contribution {
+  id              String       @id @default(cuid())
+  groupId         String
+  group           Group        @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User         @relation("Contributions", fields: [userId], references: [id], onDelete: Cascade)
+  cycleIndex      Int // 1-based
+  dueAt           DateTime
+  paidAt          DateTime?
+  amountDuePaise  Int
+  amountPaidPaise Int          @default(0)
+  status          String       @default("PENDING") // PENDING | PAID | LATE | MISSED | WAIVED
+  daysLate        Int          @default(0)
+  ledgerEntryId   String?      @unique
+  ledgerEntry     LedgerEntry? @relation(fields: [ledgerEntryId], references: [id], onDelete: SetNull)
+  payoutToUserId  String? // who received this cycle's pot
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  @@unique([groupId, userId, cycleIndex])
+  @@index([userId, dueAt])
+  @@index([groupId, cycleIndex])
+  @@index([status, dueAt])
+}
+
+/// A computed behaviour signal snapshot.
+/// valueBps is 0..10000 basis points — integers only, never floats.
+model BehaviourSignal {
+  id            String   @id @default(cuid())
+  subjectType   String // USER | BUSINESS
+  subjectId     String // polymorphic: deliberately no foreign key
+  signalKey     String // SAVINGS_CONSISTENCY | PAYMENT_CONSISTENCY | INCOME_STABILITY | REPAYMENT_BEHAVIOUR
+  windowDays    Int
+  windowStart   DateTime
+  windowEnd     DateTime
+  valueBps      Int
+  sampleCount   Int
+  evidence      String // JSON string of the sub-metrics
+  engineVersion String
+  computedAt    DateTime @default(now())
+
+  // Upserted, not appended. computedAt is deliberately NOT part of the key:
+  // including it would collide within a millisecond and grow rows without bound.
+  // Historical snapshots live inside FinancialHealthScore.breakdown instead.
+  @@unique([subjectType, subjectId, signalKey, windowDays])
+  @@index([subjectType, subjectId, computedAt])
+}
+
+/// user -> group and user -> business participation edges.
+///
+/// COMPLIANCE NOTE — READ BEFORE CHANGING ANYTHING HERE.
+/// strengthBps is a PARTICIPATION / VERIFICATION signal: how consistently, and
+/// for how long, this subject has actually shown up in this relationship.
+/// It is NOT a transfer of credit risk between the two ends of the edge, and it
+/// is NEVER an input to FinancialHealthScore. One member's default does not and
+/// must not move another member's score. Nothing in engine/scorecard.js may
+/// import this model.
+model TrustGraphEdge {
+  id               String   @id @default(cuid())
+  fromType         String // USER
+  fromId           String
+  toType           String // GROUP | BUSINESS
+  toId             String
+  relation         String // GROUP_MEMBER | EMPLOYER | SUPPLIER | CUSTOMER
+  strengthBps      Int // 0..10000 — participation/verification only
+  observationCount Int
+  firstSeenAt      DateTime
+  lastSeenAt       DateTime
+  evidence         String // JSON
+  engineVersion    String
+  computedAt       DateTime @default(now())
+
+  @@unique([fromType, fromId, toType, toId, relation])
+  @@index([toType, toId])
+}
+
+model FinancialHealthScore {
+  id          String @id @default(cuid())
+  subjectType String // USER | BUSINESS
+  subjectId   String
+  score       Int // 0..100
+  band        String // LOW | MEDIUM | HIGH — risk band, partner-facing
+  grade       String // BUILDING | FAIR | GOOD | STRONG — consumer-facing
+  breakdown   String // JSON [{category, weightBps, rawBps, contributionBps, reasonCodes[]}]
+  reasonCodes String // JSON [{code, attribution, polarity}]
+  gates       String // JSON [{code, triggered, effect}]
+
+  /// sha256 of the canonical FeatureVector. Two runs over the same inputs must
+  /// produce the same hash — this is the determinism proof, asserted by tests.
+  inputsHash String
+
+  /// Set true by engine/scorecard.js and ONLY by engine/scorecard.js.
+  /// pipeline/underwrite.pipeline.js refuses to attach a cluster signal to a
+  /// report whose score does not carry this flag. A refactor that blends cluster
+  /// data into the individual score has to delete that assertion to compile,
+  /// which makes the change visible in review instead of silent.
+  computedWithoutClusterData Boolean @default(true)
+
+  engineVersion   String
+  consentRecordId String
+  consentRecord   ConsentRecord @relation(fields: [consentRecordId], references: [id])
+  computedAt      DateTime      @default(now())
+
+  reports UnderwritingReport[]
+
+  @@index([subjectType, subjectId, computedAt])
+}
+
+/// Aggregate reliability of a GROUP. Opt-in only, and never blended into an
+/// individual score — it is always surfaced through its own top-level
+/// `cluster_signal` field so a client cannot accidentally merge the two.
+model ClusterTrustSignal {
+  id             String @id @default(cuid())
+  clusterType    String // GROUP
+  clusterId      String // Group.id
+  reliabilityBps Int // 0..10000
+  band           String // POSITIVE | NEUTRAL | CAUTION
+  memberCount    Int
+  observedCycles Int
+  onTimeRateBps  Int
+  missedCount    Int
+
+  /// The subject excluded from the aggregate, so the signal is exogenous to the
+  /// applicant and their own behaviour is never counted twice — once in their
+  /// COMMITMENTS category and again in the cluster field.
+  excludedUserId String?
+
+  evidence      String // JSON
+  engineVersion String
+  computedAt    DateTime @default(now())
+
+  reports UnderwritingReport[]
+
+  @@index([clusterType, clusterId, excludedUserId, computedAt])
+}
+
+/// A user contesting a cluster signal. While OPEN or UPHELD the cluster signal is
+/// suppressed from every report for that user immediately, at read time, with no
+/// recompute needed. This is the working appeal path, not a placeholder.
+model ClusterSignalAppeal {
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation("ClusterAppeals", fields: [userId], references: [id], onDelete: Cascade)
+  clusterType    String
+  clusterId      String
+  reason         String
+  status         String    @default("OPEN") // OPEN | UPHELD | REJECTED | WITHDRAWN
+  suppressed     Boolean   @default(true)
+  resolutionNote String?
+  createdAt      DateTime  @default(now())
+  resolvedAt     DateTime?
+
+  @@index([userId, status])
+  @@index([clusterType, clusterId, status])
+}
+
+model UnderwritingReport {
+  id                   String @id @default(cuid())
+  applicantType        String // USER | BUSINESS
+  applicantId          String
+  requestedByPartnerId String // from the frozen registry in nambikai/partners.js
+  riskCategory         String // LOW | MEDIUM | HIGH
+
+  scoreId String
+  score   FinancialHealthScore @relation(fields: [scoreId], references: [id])
+
+  // Kept structurally separate from the individual signal fields, so "shown as
+  // two distinct labelled things" is a property of the schema, not of the UI.
+  clusterSignalId       String?
+  clusterSignal         ClusterTrustSignal? @relation(fields: [clusterSignalId], references: [id])
+  clusterSignalIncluded Boolean             @default(false)
+  clusterOmissionReason String? // NOT_CONSENTED | SUPPRESSED_APPEAL | INSUFFICIENT_EVIDENCE | NO_CLUSTER
+
+  reasonCodes        String // JSON [{code, attribution:'INDIVIDUAL'|'CLUSTER', polarity, affects_score}]
+  recommendationText String
+  explainerSource    String // LLM | TEMPLATE — always shown, so a reviewer knows which wrote the prose
+  payload            String // the exact JSON returned to the caller
+
+  consentRecordId String
+  consentRecord   ConsentRecord @relation(fields: [consentRecordId], references: [id])
+  engineVersion   String
+  generatedAt     DateTime      @default(now())
+
+  @@index([applicantType, applicantId, generatedAt])
+  @@index([requestedByPartnerId, generatedAt])
+}
+
+/// Explicit, per-purpose, revocable consent. Nothing is scored without one.
+model ConsentRecord {
+  id          String    @id @default(cuid())
+  subjectType String // USER | BUSINESS
+  subjectId   String
+  userId      String // the human who granted it
+  user        User      @relation("Consents", fields: [userId], references: [id], onDelete: Cascade)
+  dataType    String // WALLET_LEDGER | GROUP_CONTRIBUTIONS | BILL_PAYMENTS | RECHARGE_HISTORY | CLUSTER_TRUST_SIGNAL | BUSINESS_GST | BUSINESS_INVOICES
+  purpose     String // HEALTH_SCORE | UNDERWRITING | ASSISTANT | SME_UNDERWRITING
+  scope       String // JSON {windowDays, partnerIds:[], clusterId?}
+  version     Int       @default(1)
+  grantedAt   DateTime  @default(now())
+  expiresAt   DateTime?
+  revokedAt   DateTime?
+
+  scores  FinancialHealthScore[]
+  reports UnderwritingReport[]
+
+  @@index([subjectType, subjectId, dataType, purpose, revokedAt])
+  @@index([userId])
+}
+
+/// Immutable audit trail: what data was used, when, why, by whom, for which
+/// artifact. DENY rows are written when the consent gate blocks a scoring call,
+/// so a refusal is as auditable as a use.
+model ConsentAuditLog {
+  id              String   @id @default(cuid())
+  consentRecordId String? // null on DENY
+  subjectType     String
+  subjectId       String
+  dataType        String
+  purpose         String
+  action          String // GRANT | REVOKE | USE | DENY | EXPIRE
+  actor           String // USER | ENGINE | PARTNER
+  actorId         String?
+  reason          String?
+  artifactType    String? // FINANCIAL_HEALTH_SCORE | UNDERWRITING_REPORT | ASSISTANT_TURN
+  artifactId      String?
+  requestId       String // correlates every row written by one scoring call
+  createdAt       DateTime @default(now())
+
+  @@index([subjectType, subjectId, createdAt])
+  @@index([artifactType, artifactId])
+  @@index([requestId])
+}
+
+model Business {
+  id            String    @id @default(cuid())
+  ownerId       String
+  owner         User      @relation("Businesses", fields: [ownerId], references: [id], onDelete: Cascade)
+  name          String
+  sector        String // RETAIL | FOOD | SERVICES | MANUFACTURING | TRANSPORT | AGRI
+  gstNumber     String?   @unique
+  registeredAt  DateTime?
+  city          String    @default("Chennai")
+  employeeCount Int       @default(0)
+
+  monthlyRevenueEstimatePaise Int
+  monthlyInflowEstimatePaise  Int
+  receivablesEstimatePaise    Int
+  existingDebtEstimatePaise   Int
+
+  status    String   @default("ACTIVE") // ACTIVE | DORMANT | CLOSED
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  records BusinessRecord[]
+
+  @@index([ownerId])
+}
+
+/// MOCK SME financial data layer — seeded GST filings, invoices, purchase orders.
+/// Never touches Account or LedgerEntry, so the wallet invariants are untouched.
+model BusinessRecord {
+  id               String    @id @default(cuid())
+  businessId       String
+  business         Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  kind             String // GST_FILING | INVOICE | PURCHASE_ORDER
+  periodStart      DateTime
+  periodEnd        DateTime
+  amountPaise      Int
+  status           String // FILED | LATE | PENDING | PAID | OVERDUE | WRITTEN_OFF
+  counterpartyName String?
+  dueAt            DateTime?
+  settledAt        DateTime?
+  metadata         String? // JSON
+  createdAt        DateTime  @default(now())
+
+  @@index([businessId, kind, periodStart])
+  @@index([businessId, status])
 }

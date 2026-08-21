@@ -1,0 +1,93 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-canvas text-ink font-sans antialiased;
+    /* The app is a phone UI; on desktop it sits on a soft brand-tinted field. */
+    background-image: radial-gradient(120% 60% at 50% 0%, #DDE7F4 0%, #EDF1F6 46%, #E9EEF5 100%);
+    background-attachment: fixed;
+  }
+
+  /* Money must line up in columns wherever it is listed. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-sky ring-offset-2 ring-offset-white rounded-md;
+  }
+
+  input,
+  button,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  /* Strip the number-input spinners from amount fields. */
+  input[type='number']::-webkit-outer-spin-button,
+  input[type='number']::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-white rounded-card shadow-card;
+  }
+
+  .section-title {
+    @apply text-[15px] font-bold text-ink tracking-[-0.01em];
+  }
+
+  .hairline {
+    @apply border-t border-line;
+  }
+
+  /* 4-across icon grid used by every "services" block, exactly like Paytm. */
+  .tile-grid {
+    @apply grid grid-cols-4 gap-x-1 gap-y-4;
+  }
+
+  .tile {
+    @apply flex flex-col items-center gap-1.5 rounded-tile px-1 py-2
+           transition-colors active:bg-sky-50;
+  }
+
+  .tile-label {
+    @apply text-2xs leading-[1.15] text-ink-muted text-center font-medium;
+  }
+
+  .scrollbar-none {
+    scrollbar-width: none;
+  }
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+}

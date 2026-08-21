@@ -1,0 +1,109 @@
+// Paytm — local-only Paytm-style wallet.
+// Every rupee in here is fake and lives in a SQLite file on this machine.
+// Money is stored in PAISE as integers so we never do floating point math on balances.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  phone        String   @unique
+  firstName    String
+  lastName     String
+  passwordHash String
+  upiId        String   @unique
+  avatarColor  String   @default("#012B72")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  account      Account?
+  sessions     Session[]
+  entries      LedgerEntry[]
+
+  @@index([firstName])
+  @@index([lastName])
+}
+
+model Account {
+  id           String   @id @default(cuid())
+  userId       String   @unique
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balancePaise Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model Session {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+/// One row per user per money movement — this is the passbook.
+/// A peer-to-peer transfer writes TWO rows (sender DEBIT + receiver CREDIT)
+/// sharing the same referenceId, inside one database transaction.
+model LedgerEntry {
+  id                String   @id @default(cuid())
+  referenceId       String
+  userId            String
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  direction         String // DEBIT | CREDIT
+  category          String // TRANSFER | ADD_MONEY | RECHARGE | BILL_PAYMENT
+  status            String   @default("SUCCESS") // SUCCESS | FAILED
+  amountPaise       Int
+  balanceAfterPaise Int
+
+  // Snapshot of the other side at the time of the transaction (passbook semantics).
+  counterpartyId     String?
+  counterpartyName   String
+  counterpartyHandle String?
+
+  note      String?
+  metadata  String? // JSON string: recharge plan, masked card, biller details
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([referenceId])
+}
+
+model RechargePlan {
+  id           String  @id @default(cuid())
+  operator     String
+  circle       String  @default("All India")
+  category     String // POPULAR | UNLIMITED | DATA | TALKTIME
+  pricePaise   Int
+  validityDays Int
+  data         String
+  talktime     String?
+  sms          String?
+  description  String
+  isActive     Boolean @default(true)
+
+  @@index([operator, category])
+}
+
+model Biller {
+  id       String  @id @default(cuid())
+  name     String
+  category String // ELECTRICITY | DTH | GAS | WATER | BROADBAND
+  icon     String  @default("bolt")
+  minPaise Int     @default(1000)
+  maxPaise Int     @default(5000000)
+  isActive Boolean @default(true)
+
+  @@index([category])
+}

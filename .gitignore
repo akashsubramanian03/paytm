@@ -1,0 +1,28 @@
+# dependencies
+node_modules/
+
+# secrets and local config — never commit these
+.env
+.env.local
+*.env.local
+
+# local database files
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+backend/prisma/*.db*
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# logs
+*.log
+npm-debug.log*
+
+# editors / OS
+.DS_Store
+.vscode/
+.idea/

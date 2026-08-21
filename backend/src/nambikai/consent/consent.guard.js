@@ -155,9 +155,17 @@ export function assertDataType(token, dataType) {
   return true;
 }
 
-/** A token for a purpose that reads nothing — used by tests and by dry runs. */
-export function emptyToken(overrides = {}) {
-  return buildToken({
+/**
+ * A token carrying an explicit set of data types, for internal callers and for
+ * tests that need to prove a SPECIFIC permission is what unlocks a query.
+ *
+ * `dataTypes` is honoured directly rather than being derived from records — a
+ * token built from an empty record list would refuse everything, which would let
+ * a boundary test pass without actually demonstrating that the missing type was
+ * the reason.
+ */
+export function tokenFor(dataTypes = [], overrides = {}) {
+  const token = buildToken({
     subjectType: SUBJECT_TYPE.USER,
     subjectId: 'none',
     purpose: PURPOSE.HEALTH_SCORE,
@@ -166,4 +174,9 @@ export function emptyToken(overrides = {}) {
     actor: ACTOR.ENGINE,
     ...overrides,
   });
+  token.grantedDataTypes = new Set(dataTypes);
+  return token;
 }
+
+/** A token that permits nothing. */
+export const emptyToken = (overrides = {}) => tokenFor([], overrides);

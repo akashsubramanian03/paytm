@@ -18,9 +18,15 @@ import { ACTOR, ARTIFACT_TYPE, PURPOSE, SUBJECT_TYPE } from '../../nambikai/cons
 import { requireConsent } from '../../nambikai/consent/consent.guard.js';
 import * as audit from '../../nambikai/consent/audit.js';
 import { buildUserFeatureVector } from '../../nambikai/features/featureVector.js';
+import { computeHealthScore } from '../../nambikai/pipeline/score.pipeline.js';
+import * as persist from '../../nambikai/pipeline/persist.js';
 import { monthsBetween } from '../../nambikai/util/window.js';
 import { bpsToPct, ratioBps } from '../../nambikai/util/stats.js';
-import { money } from '../../nambikai/serialize.js';
+import { GRADE_MESSAGE } from '../../nambikai/engine/bands.js';
+import { validate } from '../../middleware/validate.js';
+import { historyQuerySchema, scoreQuerySchema } from '../../nambikai/validators.js';
+import * as s from '../../nambikai/serialize.js';
+const { money } = s;
 
 const router = Router();
 router.use(requireAuth);
@@ -101,6 +107,83 @@ router.get(
         totalSaved: money(group.savedPaise),
       },
     });
+  }),
+);
+
+
+/**
+ * The financial health score.
+ *
+ * What is returned is deliberately shaped around explanation rather than around
+ * the number: the breakdown says how each category contributed, the reason codes
+ * say which behaviours drove it and carry the evidence they were derived from,
+ * and the gates say plainly whether anything capped the result.
+ *
+ * The consumer-facing `grade` is what the UI shows a person. The partner-facing
+ * risk `band` is present for the report layer, and the UI never uses it to tell
+ * someone they are a risk.
+ */
+async function respondWithScore(req, res, { refresh }) {
+  const asOf = new Date();
+  const result = await computeHealthScore({
+    subjectId: req.user.id,
+    user: req.user,
+    asOf,
+    requestId: req.requestId,
+    actorId: req.user.id,
+    refresh,
+  });
+
+  res.json({ score: s.healthScore(result.score), cached: result.cached });
+}
+
+router.get(
+  '/',
+  validate({ query: scoreQuerySchema }),
+  asyncHandler(async (req, res) => respondWithScore(req, res, { refresh: req.valid.query.refresh })),
+);
+
+router.post(
+  '/recompute',
+  asyncHandler(async (req, res) => respondWithScore(req, res, { refresh: true })),
+);
+
+/** The score over time — the shape of a life, not a single verdict. */
+router.get(
+  '/history',
+  validate({ query: historyQuerySchema }),
+  asyncHandler(async (req, res) => {
+    const rows = await persist.scoreHistory({
+      subjectType: SUBJECT_TYPE.USER,
+      subjectId: req.user.id,
+      limit: req.valid.query.limit,
+    });
+    res.json({
+      points: rows
+        .map((r) => ({ score: r.score, grade: r.grade, computedAt: r.computedAt }))
+        .reverse(),
+    });
+  }),
+);
+
+/** The four behaviour signals on their own, independent of today's weights. */
+router.get(
+  '/signals',
+  asyncHandler(async (req, res) => {
+    // Reading a signal is reading the subject's data, so it goes through the
+    // same gate rather than trusting that a row already exists.
+    await computeHealthScore({
+      subjectId: req.user.id,
+      user: req.user,
+      asOf: new Date(),
+      requestId: req.requestId,
+      actorId: req.user.id,
+    });
+    const rows = await persist.latestSignals({
+      subjectType: SUBJECT_TYPE.USER,
+      subjectId: req.user.id,
+    });
+    res.json({ signals: rows.map(s.behaviourSignal) });
   }),
 );
 

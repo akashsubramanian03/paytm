@@ -899,17 +899,22 @@ describe('consent gate', () => {
     // This is the test that distinguishes a real gate from middleware. If the
     // check lived on the HTTP route, this call would happily return data.
     const { extractGroupFeatures } = await import('../src/nambikai/features/group.features.js');
-    const { emptyToken } = await import('../src/nambikai/consent/consent.guard.js');
+    const { tokenFor } = await import('../src/nambikai/consent/consent.guard.js');
     const karthik = await signIn('karthik@paytm.test');
 
+    // The token carries WALLET_LEDGER but NOT GROUP_CONTRIBUTIONS, so the
+    // refusal can only be about the missing type — not about an empty token.
     await assert.rejects(
-      () =>
-        extractGroupFeatures(karthik.userId, {
-          token: emptyToken({ grantedDataTypes: new Set(['WALLET_LEDGER']) }),
-        }),
-      (err) => err.code === 'CONSENT_REQUIRED',
+      () => extractGroupFeatures(karthik.userId, { token: tokenFor(['WALLET_LEDGER']) }),
+      (err) => err.code === 'CONSENT_REQUIRED' && err.details.missing.includes('GROUP_CONTRIBUTIONS'),
       'a token without GROUP_CONTRIBUTIONS must not be able to read contributions',
     );
+
+    // And the positive control: the same call succeeds once the type is present.
+    const ok = await extractGroupFeatures(karthik.userId, {
+      token: tokenFor(['GROUP_CONTRIBUTIONS']),
+    });
+    assert.ok(ok.dueCount > 0, 'with the right permission the extractor must work');
 
     await assert.rejects(
       () => extractGroupFeatures(karthik.userId, {}),

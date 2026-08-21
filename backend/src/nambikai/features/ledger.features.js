@@ -27,6 +27,20 @@ const INCOME_CATEGORIES = new Set(['TRANSFER', 'ADD_MONEY']);
 
 const isSignupBonus = (entry) => (entry.metadata ?? '').includes('SIGNUP_BONUS');
 
+/**
+ * Money moving into or out of a savings circle.
+ *
+ * These are separated from everyday earning and spending throughout, and the
+ * reason matters for exactly the people this product is for. A rotating savings
+ * member pays a fixed amount out every month and receives the whole pot back
+ * every few months. Counted naively that reads as erratic income and chronic
+ * overspending — the most disciplined saving behaviour in the product would
+ * score as the worst. Separating the two lets income stability measure earnings,
+ * lets spending measure spending, and lets the circle be scored as what it is:
+ * saving.
+ */
+const isGroupFlow = (entry) => (entry.metadata ?? '').includes('GROUP_CONTRIBUTION');
+
 export async function extractLedgerFeatures(
   userId,
   { asOf = new Date(), months = DEFAULT_WINDOW_MONTHS, token } = {},
@@ -55,6 +69,8 @@ export async function extractLedgerFeatures(
 
   const monthlyInflowPaise = [];
   const monthlyOutflowPaise = [];
+  const monthlyGroupInPaise = [];
+  const monthlyGroupOutPaise = [];
   const monthEndBalancePaise = [];
   const monthsWithIncome = [];
   const monthsWithBill = [];
@@ -63,12 +79,21 @@ export async function extractLedgerFeatures(
   for (const bucket of buckets) {
     let inflow = 0;
     let outflow = 0;
+    let groupIn = 0;
+    let groupOut = 0;
     let sawBill = false;
     let sawRecharge = false;
 
     for (const entry of bucket.rows) {
+      const group = isGroupFlow(entry);
       if (entry.direction === 'CREDIT') {
-        if (INCOME_CATEGORIES.has(entry.category) && !isSignupBonus(entry)) inflow += entry.amountPaise;
+        // A payout from a circle is savings coming back, not money earned.
+        if (group) groupIn += entry.amountPaise;
+        else if (INCOME_CATEGORIES.has(entry.category) && !isSignupBonus(entry)) {
+          inflow += entry.amountPaise;
+        }
+      } else if (group) {
+        groupOut += entry.amountPaise;
       } else {
         outflow += entry.amountPaise;
         if (entry.category === 'BILL_PAYMENT') sawBill = true;
@@ -78,6 +103,8 @@ export async function extractLedgerFeatures(
 
     monthlyInflowPaise.push(inflow);
     monthlyOutflowPaise.push(outflow);
+    monthlyGroupInPaise.push(groupIn);
+    monthlyGroupOutPaise.push(groupOut);
     monthsWithIncome.push(inflow > 0 ? 1 : 0);
     monthsWithBill.push(sawBill ? 1 : 0);
     monthsWithRecharge.push(sawRecharge ? 1 : 0);
@@ -102,14 +129,23 @@ export async function extractLedgerFeatures(
    * only repayment evidence that exists — and the UI says exactly that rather
    * than letting anyone assume a CIBIL pull.
    */
-  const credits = entries.filter((e) => e.direction === 'CREDIT' && e.counterpartyId);
-  const debits = entries.filter((e) => e.direction === 'DEBIT' && e.counterpartyId);
+  // Circle money is excluded: a chit payout arrives from every other member at
+  // once and is never "repaid" to them individually, so counting it here would
+  // manufacture a dozen phantom unpaid loans for the most reliable savers.
+  const credits = entries.filter(
+    (e) => e.direction === 'CREDIT' && e.counterpartyId && !isGroupFlow(e),
+  );
+  const debits = entries.filter(
+    (e) => e.direction === 'DEBIT' && e.counterpartyId && !isGroupFlow(e),
+  );
   let borrowLikeEvents = 0;
   let repaidEvents = 0;
 
   for (const credit of credits) {
-    // Only sizeable, one-off credits look like a loan from a friend.
-    if (credit.amountPaise < 100_000) continue;
+    // Only sizeable, one-off credits look like a loan from a friend. The floor is
+    // deliberately high: at a lower one, ordinary payments between neighbours get
+    // misread as debts.
+    if (credit.amountPaise < 500_000) continue;
     borrowLikeEvents += 1;
     const deadline = new Date(credit.createdAt.getTime() + 45 * 86_400_000);
     const returned = debits
@@ -143,6 +179,8 @@ export async function extractLedgerFeatures(
     currentBalancePaise: account?.balancePaise ?? 0,
     monthlyInflowPaise,
     monthlyOutflowPaise,
+    monthlyGroupInPaise,
+    monthlyGroupOutPaise,
     monthEndBalancePaise,
     monthsWithIncome,
     monthsWithBill,

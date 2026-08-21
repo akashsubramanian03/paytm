@@ -125,5 +125,9 @@ export const api = {
     consentAudit: (params) => request('GET', withQuery('/nambikai/consents/audit', params)),
 
     scoreInputs: () => request('GET', '/nambikai/score/inputs'),
+    score: () => request('GET', '/nambikai/score'),
+    recomputeScore: () => request('POST', '/nambikai/score/recompute'),
+    scoreHistory: (limit) => request('GET', withQuery('/nambikai/score/history', { limit })),
+    scoreSignals: () => request('GET', '/nambikai/score/signals'),
   },
 };

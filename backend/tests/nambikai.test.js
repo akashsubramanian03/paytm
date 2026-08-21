@@ -960,3 +960,160 @@ describe('consent gate', () => {
     assert.equal(clusterConsents, 0, 'cluster scoring must never be on by default');
   });
 });
+
+/* ================================================ underwriting reports ==== */
+
+describe('underwriting reports', () => {
+  const generate = (token, partnerId = 'partner_demo_nbfc') =>
+    api('POST', '/nambikai/underwriting/reports', { token, body: { partnerId } });
+
+  test('a report is generated for a partner the applicant chooses', async () => {
+    const karthik = await signIn('karthik@paytm.test');
+    const res = await generate(karthik.token);
+
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    const r = res.body.report;
+    assert.ok(['LOW', 'MEDIUM', 'HIGH'].includes(r.risk_category));
+    assert.equal(r.requested_by_partner_id, 'partner_demo_nbfc');
+    assert.ok(r.individual_positive_signals.length > 0);
+    assert.ok(r.recommendation_text.length > 80);
+    assert.ok(r.consent_ref, 'a report must name the consent it was produced under');
+    assert.match(r.partner_disclaimer, /does not lend/i);
+  });
+
+  test('the risk category is the engine’s, not the prose writer’s', async () => {
+    // Recompute the band independently and require the report to agree. The
+    // explainer runs after this is fixed and cannot influence it.
+    const karthik = await signIn('karthik@paytm.test');
+    const res = await generate(karthik.token);
+    const r = res.body.report;
+
+    const { scoreUser } = await import('../src/nambikai/engine/scorecard.js');
+    const { applyRules } = await import('../src/nambikai/engine/rules.js');
+    const { buildUserFeatureVector } = await import('../src/nambikai/features/featureVector.js');
+    const { tokenFor } = await import('../src/nambikai/consent/consent.guard.js');
+    const { monthsBetween } = await import('../src/nambikai/util/window.js');
+
+    const user = await prisma.user.findUnique({ where: { id: karthik.userId } });
+    const asOf = new Date();
+    const fv = await buildUserFeatureVector(karthik.userId, {
+      asOf,
+      token: tokenFor(['WALLET_LEDGER', 'GROUP_CONTRIBUTIONS']),
+      tenureMonths: monthsBetween(user.createdAt, asOf),
+    });
+    const independent = applyRules(scoreUser(fv), fv);
+
+    assert.equal(r.risk_category, independent.band, 'the prose layer changed the risk category');
+    assert.equal(r.score.value, scoreUser(fv).score);
+  });
+
+  test('cluster_signal is always present as its own key, and never merged', async () => {
+    const karthik = await signIn('karthik@paytm.test');
+    const r = (await generate(karthik.token)).body.report;
+
+    assert.ok('cluster_signal' in r, 'the key must always exist, object or null');
+    assert.equal(r.cluster_signal, null, 'nobody is opted in by default');
+    assert.ok(r.cluster_omission_reason, 'a null signal must say why');
+
+    // No cluster-attributed code may appear in the individual lists.
+    for (const signal of [...r.individual_positive_signals, ...r.individual_risk_signals]) {
+      assert.ok(!signal.code.startsWith('CLUSTER_'), `${signal.code} leaked into individual signals`);
+    }
+    // And the cluster codes that do exist are tagged and non-scoring.
+    const clusterCodes = r.reason_codes.filter((c) => c.attribution === 'CLUSTER');
+    assert.ok(clusterCodes.length > 0);
+    assert.ok(clusterCodes.every((c) => c.affects_score === false));
+  });
+
+  test('the trust graph is participation, and says so', async () => {
+    const karthik = await signIn('karthik@paytm.test');
+    await generate(karthik.token);
+
+    const res = await api('GET', '/nambikai/underwriting/relationships', { token: karthik.token });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.relationships.length > 0, 'the hero belongs to circles and buys from a shop');
+    assert.match(res.body.disclaimer, /never move your score/i);
+
+    for (const rel of res.body.relationships) {
+      assert.ok(rel.strengthPct >= 0 && rel.strengthPct <= 100);
+      assert.match(rel.evidence.meaning, /not a transfer of credit risk/i);
+    }
+
+    // The decisive property: an edge exists, and the score is identical whether
+    // or not the graph has been built.
+    const { scoreUser } = await import('../src/nambikai/engine/scorecard.js');
+    const { buildUserFeatureVector } = await import('../src/nambikai/features/featureVector.js');
+    const { tokenFor } = await import('../src/nambikai/consent/consent.guard.js');
+    const fv = await buildUserFeatureVector(karthik.userId, {
+      token: tokenFor(['WALLET_LEDGER', 'GROUP_CONTRIBUTIONS']),
+    });
+    assert.ok(!JSON.stringify(fv).includes('strengthBps'), 'the graph must not reach the scorecard');
+  });
+
+  test('you cannot request a report about somebody else', async () => {
+    const karthik = await signIn('karthik@paytm.test');
+    const sreeram = await signIn('sreeram@paytm.test');
+    const res = await api('POST', '/nambikai/underwriting/reports', {
+      token: karthik.token,
+      body: { partnerId: 'partner_demo_nbfc', applicantId: sreeram.userId },
+    });
+    assert.equal(res.status, 403);
+  });
+
+  test('an unknown partner is rejected', async () => {
+    const karthik = await signIn('karthik@paytm.test');
+    const res = await api('POST', '/nambikai/underwriting/reports', {
+      token: karthik.token,
+      body: { partnerId: 'partner_evil_corp' },
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test('underwriting needs its own consent, separate from seeing your own score', async () => {
+    const user = await makeUser();
+    // Enough to see your own score...
+    for (const dataType of ['WALLET_LEDGER', 'GROUP_CONTRIBUTIONS']) {
+      await api('POST', '/nambikai/consents', {
+        token: user.token,
+        body: { dataType, purpose: 'HEALTH_SCORE' },
+      });
+    }
+    assert.equal((await api('GET', '/nambikai/score', { token: user.token })).status, 200);
+
+    // ...but not enough to send an assessment to a lender.
+    const blocked = await generate(user.token);
+    assert.equal(blocked.status, 403);
+    assert.equal(blocked.body.error.code, 'CONSENT_REQUIRED');
+    assert.ok(blocked.body.error.details.missing.includes('BILL_PAYMENTS'));
+  });
+
+  test('a report survives consent withdrawal as a record, but becomes unusable', async () => {
+    const karthik = await signIn('karthik@paytm.test');
+    await generate(karthik.token);
+
+    const list = await api('GET', '/nambikai/underwriting/reports?limit=1', { token: karthik.token });
+    const id = list.body.reports[0].id;
+    assert.equal(list.body.reports[0].usable, true);
+
+    const detail = await api('GET', `/nambikai/underwriting/reports/${id}`, { token: karthik.token });
+    const consentRef = detail.body.report.consent_ref;
+
+    const consents = await api('GET', '/nambikai/consents', { token: karthik.token });
+    const used = consents.body.consents.find((c) => c.id === consentRef);
+    assert.ok(used, 'the report must reference a real consent record');
+
+    await api('DELETE', `/nambikai/consents/${used.id}`, { token: karthik.token });
+
+    const after = await api('GET', `/nambikai/underwriting/reports/${id}`, { token: karthik.token });
+    assert.equal(after.status, 200, 'the record must remain readable');
+    assert.equal(after.body.consentStatus, 'REVOKED');
+    assert.equal(after.body.usable, false);
+    assert.ok(after.body.report, 'the disclosed content is preserved as evidence');
+
+    // Restore, so later tests in this file are unaffected.
+    await api('POST', '/nambikai/consents', {
+      token: karthik.token,
+      body: { dataType: used.dataType, purpose: used.purpose },
+    });
+  });
+});

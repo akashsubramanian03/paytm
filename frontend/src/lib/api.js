@@ -132,5 +132,11 @@ export const api = {
 
     ask: (body) => request('POST', '/nambikai/assistant/ask', { body }),
     assistantSuggestions: () => request('GET', '/nambikai/assistant/suggestions'),
+
+    partners: () => request('GET', '/nambikai/underwriting/partners'),
+    relationships: () => request('GET', '/nambikai/underwriting/relationships'),
+    createReport: (body) => request('POST', '/nambikai/underwriting/reports', { body }),
+    reports: (params) => request('GET', withQuery('/nambikai/underwriting/reports', params)),
+    report: (id) => request('GET', `/nambikai/underwriting/reports/${id}`),
   },
 };

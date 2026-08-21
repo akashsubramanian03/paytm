@@ -205,6 +205,32 @@ export default function NambikaiHome() {
             />
           </Link>
           <div className="hairline" />
+          <Link to="/nambikai/report/new" className="block">
+            <ListRow
+              icon={
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-navy">
+                  <Icon name="document" size={19} />
+                </span>
+              }
+              title="Share with a lender"
+              subtitle="See exactly what a partner would be shown"
+              onClick={() => {}}
+            />
+          </Link>
+          <div className="hairline" />
+          <Link to="/nambikai/assistant" className="block">
+            <ListRow
+              icon={
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-navy">
+                  <Icon name="sparkle" size={19} />
+                </span>
+              }
+              title="Ask about your money"
+              subtitle="Grounded in your signals, never your transactions"
+              onClick={() => {}}
+            />
+          </Link>
+          <div className="hairline" />
           <Link to="/nambikai/consent" className="block">
             <ListRow
               icon={

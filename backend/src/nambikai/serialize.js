@@ -122,6 +122,13 @@ export function memberStats(contributions) {
   const paid = due.filter((c) => c.status === CONTRIB_STATUS.PAID);
   const onTime = paid.filter((c) => c.daysLate === 0);
   const missed = due.filter((c) => c.status === CONTRIB_STATUS.MISSED);
+
+  // The on-time rate is measured over SETTLED cycles only. A cycle that is
+  // merely open is not yet a broken promise, and counting it as one would show
+  // a member with a spotless record as 93% simply because this month is still
+  // running — which is exactly the kind of quiet unfairness this whole layer is
+  // supposed to avoid.
+  const settled = paid.length + missed.length;
   const next = due
     .filter((c) => c.status === CONTRIB_STATUS.PENDING || c.status === CONTRIB_STATUS.LATE)
     .sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt))[0];
@@ -131,7 +138,8 @@ export function memberStats(contributions) {
     paidCount: paid.length,
     onTimeCount: onTime.length,
     missedCount: missed.length,
-    onTimePct: due.length ? Math.round((onTime.length * 100) / due.length) : null,
+    settledCount: settled,
+    onTimePct: settled ? Math.round((onTime.length * 100) / settled) : null,
     totalSaved: money(paid.reduce((sum, c) => sum + c.amountPaidPaise, 0)),
     nextDue: next ? contribution(next) : null,
   };

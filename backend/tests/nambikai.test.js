@@ -116,7 +116,9 @@ async function makeBackdatedGroup(token, memberUserIds, overrides = {}) {
   const res = await api('POST', '/nambikai/groups', {
     token,
     body: {
-      name: 'Anna Nagar Vendors Chit',
+      // Deliberately not a seeded group name: the seeded-history tests below
+      // filter by name, and a collision would let these fixtures pollute them.
+      name: 'Test Rotating Circle',
       purpose: 'ROTATING_SAVINGS',
       cadence: 'MONTHLY',
       amount: '500',
@@ -138,7 +140,7 @@ async function makeBackdatedGroup(token, memberUserIds, overrides = {}) {
  */
 async function makeSavingsGroup(adminToken, memberUserIds) {
   return makeBackdatedGroup(adminToken, memberUserIds, {
-    name: 'Besant Nagar Savers',
+    name: 'Test Savings Circle',
     purpose: 'SAVINGS',
   });
 }
@@ -569,6 +571,182 @@ describe('whole-database invariants after Nambikai writes', () => {
     });
     for (const c of unpaid) {
       assert.equal(c.ledgerEntryId, null, `${c.status} contribution ${c.id} moved money`);
+    }
+  });
+});
+
+/* ================================================ the seeded 18 months ==== */
+
+/**
+ * These assert the PROPERTIES the behaviour engine depends on, not exact
+ * numbers. A seed that still runs but has quietly lost its shape — every persona
+ * behaving identically, nobody ever missing a contribution — would produce a
+ * scorecard that cannot distinguish anyone, and every downstream test would
+ * still pass. These are the tests that would catch that.
+ */
+describe('seeded 18-month history', () => {
+  const seededGroupNames = ['Anna Nagar Vendors Chit', 'Besant Nagar Savers', 'T Nagar Traders Pool'];
+
+  /** Contributions from the seed only, ignoring groups created by other tests. */
+  async function seededContributions(where = {}) {
+    return prisma.contribution.findMany({
+      where: { group: { name: { in: seededGroupNames } }, ...where },
+      include: { group: true },
+    });
+  }
+
+  const personaId = async (email) => (await prisma.user.findUnique({ where: { email } })).id;
+
+  test('every persona has a wallet whose ledger goes back far enough to score', async () => {
+    const expected = { 'karthik@paytm.test': 400, 'sreeram@paytm.test': 400, 'divya@paytm.test': 400 };
+    for (const [email, minDays] of Object.entries(expected)) {
+      const id = await personaId(email);
+      const oldest = await prisma.ledgerEntry.findFirst({
+        where: { userId: id },
+        orderBy: { createdAt: 'asc' },
+      });
+      const days = Math.round((Date.now() - oldest.createdAt.getTime()) / 86_400_000);
+      assert.ok(days >= minDays, `${email} has only ${days} days of history, need ${minDays}`);
+    }
+  });
+
+  test('the deliberately-new persona has too little history to score', async () => {
+    const id = await personaId('arjun@paytm.test');
+    const oldest = await prisma.ledgerEntry.findFirst({
+      where: { userId: id },
+      orderBy: { createdAt: 'asc' },
+    });
+    const days = Math.round((Date.now() - oldest.createdAt.getTime()) / 86_400_000);
+    assert.ok(days < 100, `the thin-file persona should be new, has ${days} days`);
+  });
+
+  test('the hero has a long, spotless commitment record', async () => {
+    const id = await personaId('karthik@paytm.test');
+    const mine = await seededContributions({ userId: id, dueAt: { lte: new Date() } });
+
+    assert.ok(mine.length >= 30, `expected >= 30 due contributions, got ${mine.length}`);
+    assert.equal(mine.filter((c) => c.status === 'MISSED').length, 0, 'the hero never misses');
+    assert.equal(
+      mine.filter((c) => c.status === 'PAID' && c.daysLate > 0).length,
+      0,
+      'the hero is never late',
+    );
+    assert.ok(
+      new Set(mine.map((c) => c.groupId)).size >= 2,
+      'the hero should be building a record in more than one circle',
+    );
+  });
+
+  test('somebody misses — a commitment record needs a downside to mean anything', async () => {
+    const missed = await seededContributions({ status: 'MISSED' });
+    assert.ok(missed.length > 0, 'no missed contributions at all: the signal has no negative case');
+
+    const byUser = new Map();
+    for (const c of missed) byUser.set(c.userId, (byUser.get(c.userId) ?? 0) + 1);
+    assert.ok(byUser.size >= 2, 'misses should be concentrated in specific personas, not universal');
+  });
+
+  test('personas differ: on-time rates span a wide range', async () => {
+    const all = await seededContributions({ dueAt: { lte: new Date() } });
+    const byUser = new Map();
+    for (const c of all) {
+      if (!byUser.has(c.userId)) byUser.set(c.userId, { due: 0, onTime: 0 });
+      const s = byUser.get(c.userId);
+      s.due += 1;
+      if (c.status === 'PAID' && c.daysLate === 0) s.onTime += 1;
+    }
+    const rates = [...byUser.values()].filter((s) => s.due >= 5).map((s) => s.onTime / s.due);
+    assert.ok(rates.length >= 4, 'expected several personas with a real record');
+    assert.ok(Math.max(...rates) >= 0.99, 'somebody should be spotless');
+    assert.ok(Math.min(...rates) <= 0.2, 'somebody should be clearly unreliable');
+  });
+
+  test('two personas have no group history at all', async () => {
+    for (const email of ['priya@paytm.test', 'arjun@paytm.test']) {
+      const id = await personaId(email);
+      const mine = await seededContributions({ userId: id });
+      assert.equal(mine.length, 0, `${email} should have no seeded group history`);
+    }
+  });
+
+  test('income volatility differs sharply between the freelancer and the salaried', async () => {
+    const monthlyTotals = async (email) => {
+      const id = await personaId(email);
+      const rows = await prisma.ledgerEntry.findMany({
+        where: { userId: id, direction: 'CREDIT' },
+      });
+      const buckets = new Map();
+      for (const r of rows) {
+        if ((r.metadata ?? '').includes('SIGNUP_BONUS')) continue;
+        const key = `${r.createdAt.getUTCFullYear()}-${r.createdAt.getUTCMonth()}`;
+        buckets.set(key, (buckets.get(key) ?? 0) + r.amountPaise);
+      }
+      return [...buckets.values()];
+    };
+
+    const cv = (values) => {
+      const mean = values.reduce((a, b) => a + b, 0) / values.length;
+      const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
+      return Math.sqrt(variance) / mean;
+    };
+
+    const freelancer = cv(await monthlyTotals('divya@paytm.test'));
+    const shopkeeper = cv(await monthlyTotals('meena@paytm.test'));
+    assert.ok(
+      freelancer > shopkeeper * 2,
+      `the freelancer's income should be far lumpier than the shopkeeper's (${freelancer.toFixed(2)} vs ${shopkeeper.toFixed(2)})`,
+    );
+  });
+
+  test('buffers differ: somebody is comfortable, somebody is days from empty', async () => {
+    const bufferDays = async (email) => {
+      const id = await personaId(email);
+      const account = await prisma.account.findUnique({ where: { userId: id } });
+      const debits = await prisma.ledgerEntry.findMany({ where: { userId: id, direction: 'DEBIT' } });
+      const oldest = debits.reduce((a, e) => (e.createdAt < a ? e.createdAt : a), debits[0].createdAt);
+      const months = Math.max(1, (Date.now() - oldest.getTime()) / (30 * 86_400_000));
+      const perMonth = debits.reduce((n, e) => n + e.amountPaise, 0) / months;
+      return (account.balancePaise * 30) / perMonth;
+    };
+
+    // Rahul's income collapsed six months ago and his costs did not.
+    assert.ok((await bufferDays('rahul@paytm.test')) < 20, 'the declining persona should be nearly empty');
+    // Ananya earns well and spends all of it.
+    assert.ok((await bufferDays('ananya@paytm.test')) < 20, 'the high-earner should still have a thin buffer');
+    // Sreeram is the healthy baseline.
+    assert.ok((await bufferDays('sreeram@paytm.test')) > 45, 'the baseline persona should be comfortable');
+  });
+
+  test('every seeded paid contribution agrees with the ledger row it annotates', async () => {
+    const paid = await prisma.contribution.findMany({
+      where: { status: 'PAID' },
+      include: { ledgerEntry: true },
+    });
+    assert.ok(paid.length >= 150, `expected a substantial paid history, got ${paid.length}`);
+    for (const c of paid) {
+      assert.ok(c.ledgerEntry, `paid contribution ${c.id} annotates nothing`);
+      assert.equal(c.amountPaidPaise, c.ledgerEntry.amountPaise);
+      assert.equal(c.ledgerEntry.userId, c.userId);
+    }
+  });
+
+  test('the seed produced a substantial, chronologically coherent ledger', async () => {
+    const count = await prisma.ledgerEntry.count();
+    assert.ok(count > 3000, `expected thousands of ledger rows, got ${count}`);
+
+    // Every row's balanceAfterPaise must be the running balance at that moment.
+    const users = await prisma.user.findMany();
+    for (const user of users) {
+      const rows = await prisma.ledgerEntry.findMany({
+        where: { userId: user.id },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      });
+      let running = 0;
+      for (const row of rows) {
+        running += row.direction === 'CREDIT' ? row.amountPaise : -row.amountPaise;
+        assert.ok(running >= 0, `${user.email} went negative mid-history`);
+      }
+      assert.equal(running, rows.at(-1).balanceAfterPaise, `${user.email} final balance drifted`);
     }
   });
 });

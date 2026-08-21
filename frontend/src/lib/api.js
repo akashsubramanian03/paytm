@@ -138,5 +138,13 @@ export const api = {
     createReport: (body) => request('POST', '/nambikai/underwriting/reports', { body }),
     reports: (params) => request('GET', withQuery('/nambikai/underwriting/reports', params)),
     report: (id) => request('GET', `/nambikai/underwriting/reports/${id}`),
+
+    clusterStatus: () => request('GET', '/nambikai/cluster/status'),
+    clusterSignal: (groupId) => request('GET', `/nambikai/cluster/${groupId}/signal`),
+    clusterOptIn: (groupId) => request('POST', '/nambikai/cluster/opt-in', { body: { groupId } }),
+    clusterOptOut: (groupId) => request('POST', '/nambikai/cluster/opt-out', { body: { groupId } }),
+    appeals: () => request('GET', '/nambikai/cluster/appeals'),
+    createAppeal: (body) => request('POST', '/nambikai/cluster/appeals', { body }),
+    withdrawAppeal: (id) => request('POST', `/nambikai/cluster/appeals/${id}/withdraw`),
   },
 };

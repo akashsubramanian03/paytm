@@ -21,6 +21,7 @@ import NambikaiHome from './pages/nambikai/NambikaiHome.jsx';
 import Consent from './pages/nambikai/Consent.jsx';
 import ConsentAudit from './pages/nambikai/ConsentAudit.jsx';
 import Assistant from './pages/nambikai/Assistant.jsx';
+import ClusterSettings from './pages/nambikai/ClusterSettings.jsx';
 import Groups from './pages/nambikai/Groups.jsx';
 import Report from './pages/nambikai/Report.jsx';
 import RequestReport from './pages/nambikai/RequestReport.jsx';
@@ -60,6 +61,7 @@ export default function App() {
           <Route path="nambikai/consent" element={<Consent />} />
           <Route path="nambikai/consent/audit" element={<ConsentAudit />} />
           <Route path="nambikai/assistant" element={<Assistant />} />
+          <Route path="nambikai/cluster" element={<ClusterSettings />} />
           <Route path="nambikai/report" element={<Report />} />
           <Route path="nambikai/report/new" element={<RequestReport />} />
           <Route path="nambikai/groups" element={<Groups />} />

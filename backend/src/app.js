@@ -10,6 +10,14 @@ import accountRoutes from './routes/account.routes.js';
 import transactionRoutes from './routes/transaction.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import nambikaiRoutes from './routes/nambikai.routes.js';
+import { setClusterProvider } from './nambikai/pipeline/underwrite.pipeline.js';
+import { clusterSignalForUser } from './nambikai/pipeline/cluster.pipeline.js';
+
+// The cluster signal is wired in at composition time rather than imported
+// directly by the underwriting pipeline. That keeps the dependency pointing one
+// way — underwriting knows there MIGHT be a cluster provider, and never reaches
+// into cluster internals — and it means the null path stays exercisable.
+setClusterProvider(({ userId, asOf }) => clusterSignalForUser(userId, { asOf }));
 
 export function createApp() {
   const app = express();

@@ -1117,3 +1117,247 @@ describe('underwriting reports', () => {
     });
   });
 });
+
+/* ============================================= the cluster trust signal ==== */
+
+/**
+ * The one place group-level behaviour informs an assessment, and therefore the
+ * place that needs the most fences. These tests are the fences.
+ *
+ * The decisive one is "the individual score is byte-identical with cluster
+ * opt-in on and off". If anyone ever wires group data into the individual
+ * scorecard, that test fails — no reviewer has to notice.
+ */
+describe('cluster trust signal', () => {
+  const statusFor = (token) => api('GET', '/nambikai/cluster/status', { token });
+  const optIn = (token, groupId) =>
+    api('POST', '/nambikai/cluster/opt-in', { token, body: { groupId } });
+  const optOut = (token, groupId) =>
+    api('POST', '/nambikai/cluster/opt-out', { token, body: { groupId } });
+  const report = (token) =>
+    api('POST', '/nambikai/underwriting/reports', {
+      token,
+      body: { partnerId: 'partner_demo_nbfc' },
+    });
+
+  /** Lakshmi is the fairness case: personally impeccable, inside a weak pool. */
+  async function lakshmiAndHerPool() {
+    const lakshmi = await signIn('lakshmi@paytm.test');
+    const status = await statusFor(lakshmi.token);
+    const cluster = status.body.eligibleClusters.find((c) => c.eligible);
+    assert.ok(cluster, 'Lakshmi must belong to a cluster with enough evidence');
+    return { lakshmi, cluster };
+  }
+
+  test('nobody is opted in by default', async () => {
+    const lakshmi = await signIn('lakshmi@paytm.test');
+    const status = await statusFor(lakshmi.token);
+    assert.equal(status.body.optedIn, false, 'cluster scoring must never be on by default');
+    for (const c of status.body.eligibleClusters) assert.equal(c.optedIn, false);
+  });
+
+  test('without opting in, a report carries a null signal and says why', async () => {
+    const lakshmi = await signIn('lakshmi@paytm.test');
+    const r = (await report(lakshmi.token)).body.report;
+    assert.equal(r.cluster_signal, null);
+    assert.equal(r.cluster_omission_reason, 'NOT_CONSENTED');
+  });
+
+  test('after opting in, the signal appears as its own top-level field', async () => {
+    const { lakshmi, cluster } = await lakshmiAndHerPool();
+    assert.equal((await optIn(lakshmi.token, cluster.groupId)).status, 201);
+
+    const r = (await report(lakshmi.token)).body.report;
+    assert.ok(r.cluster_signal, 'the signal should now be present');
+    assert.equal(r.cluster_omission_reason, null);
+    assert.equal(r.cluster_signal.affects_individual_score, false);
+    assert.equal(r.cluster_signal.excluded_subject, true);
+    assert.match(r.cluster_signal.disclaimer, /not a transfer of credit risk/i);
+    assert.ok(r.cluster_signal.opt_out_path && r.cluster_signal.appeal_path);
+
+    // Never merged into the individual lists.
+    for (const s of [...r.individual_positive_signals, ...r.individual_risk_signals]) {
+      assert.ok(!s.code.startsWith('CLUSTER_'), `${s.code} leaked into individual signals`);
+    }
+    const clusterCodes = r.reason_codes.filter((c) => c.attribution === 'CLUSTER');
+    assert.ok(clusterCodes.length > 0);
+    assert.ok(clusterCodes.every((c) => c.affects_score === false));
+
+    await optOut(lakshmi.token, cluster.groupId);
+  });
+
+  test('THE DECISIVE ONE: the individual score is identical with cluster on and off', async () => {
+    const { lakshmi, cluster } = await lakshmiAndHerPool();
+
+    const before = (await report(lakshmi.token)).body.report;
+    assert.equal(before.cluster_signal, null);
+
+    await optIn(lakshmi.token, cluster.groupId);
+    const during = (await report(lakshmi.token)).body.report;
+    assert.ok(during.cluster_signal, 'the cluster signal must actually be present for this to mean anything');
+
+    await optOut(lakshmi.token, cluster.groupId);
+    const after = (await report(lakshmi.token)).body.report;
+    assert.equal(after.cluster_signal, null);
+
+    assert.equal(during.score.value, before.score.value, 'opting in changed the individual score');
+    assert.equal(during.risk_category, before.risk_category, 'opting in changed the risk category');
+    assert.equal(
+      during.score.inputs_hash,
+      before.score.inputs_hash,
+      'cluster data reached the individual FeatureVector',
+    );
+    assert.equal(after.score.inputs_hash, before.score.inputs_hash);
+    assert.deepEqual(
+      during.individual_positive_signals.map((s) => s.code),
+      before.individual_positive_signals.map((s) => s.code),
+    );
+  });
+
+  test('the fairness case: a reliable person inside a weak pool keeps their own score', async () => {
+    const { lakshmi, cluster } = await lakshmiAndHerPool();
+    await optIn(lakshmi.token, cluster.groupId);
+    const r = (await report(lakshmi.token)).body.report;
+
+    // Her pool is weak...
+    assert.equal(r.cluster_signal.band, 'CAUTION', 'the seeded pool should compute to CAUTION');
+    // ...and she is not.
+    assert.equal(r.risk_category, 'LOW');
+    assert.ok(r.individual_risk_signals.every((s) => !s.code.startsWith('CLUSTER_')));
+
+    await optOut(lakshmi.token, cluster.groupId);
+  });
+
+  test('the subject is excluded from their own cluster aggregate', async () => {
+    const { lakshmi, cluster } = await lakshmiAndHerPool();
+    await optIn(lakshmi.token, cluster.groupId);
+
+    const res = await api('GET', `/nambikai/cluster/${cluster.groupId}/signal`, {
+      token: lakshmi.token,
+    });
+    assert.equal(res.body.clusterSignal.excludedSubject, true);
+
+    const stored = await prisma.clusterTrustSignal.findFirst({
+      where: { clusterId: cluster.groupId, excludedUserId: lakshmi.userId },
+      orderBy: { computedAt: 'desc' },
+    });
+    assert.ok(stored, 'the stored signal must record who was excluded');
+    assert.equal(stored.excludedUserId, lakshmi.userId);
+
+    await optOut(lakshmi.token, cluster.groupId);
+  });
+
+  test('filing a dispute suppresses the signal on the very next request', async () => {
+    const { lakshmi, cluster } = await lakshmiAndHerPool();
+    await optIn(lakshmi.token, cluster.groupId);
+    assert.ok((await report(lakshmi.token)).body.report.cluster_signal, 'signal present before the dispute');
+
+    const appeal = await api('POST', '/nambikai/cluster/appeals', {
+      token: lakshmi.token,
+      body: { groupId: cluster.groupId, reason: 'My own record is spotless; this describes other people.' },
+    });
+    assert.equal(appeal.status, 201);
+    assert.equal(appeal.body.effect, 'SUPPRESSED_IMMEDIATELY');
+
+    // No recompute, no delay.
+    const after = (await report(lakshmi.token)).body.report;
+    assert.equal(after.cluster_signal, null);
+    assert.equal(after.cluster_omission_reason, 'SUPPRESSED_APPEAL');
+
+    // Withdrawing the dispute restores it.
+    await api('POST', `/nambikai/cluster/appeals/${appeal.body.appeal.id}/withdraw`, {
+      token: lakshmi.token,
+    });
+    assert.ok((await report(lakshmi.token)).body.report.cluster_signal);
+
+    await optOut(lakshmi.token, cluster.groupId);
+  });
+
+  test('opting out removes the signal from future assessments', async () => {
+    const { lakshmi, cluster } = await lakshmiAndHerPool();
+    await optIn(lakshmi.token, cluster.groupId);
+    assert.ok((await report(lakshmi.token)).body.report.cluster_signal);
+
+    const out = await optOut(lakshmi.token, cluster.groupId);
+    assert.equal(out.status, 200);
+    assert.equal(out.body.optedIn, false);
+
+    const after = (await report(lakshmi.token)).body.report;
+    assert.equal(after.cluster_signal, null);
+    assert.equal(after.cluster_omission_reason, 'NOT_CONSENTED');
+  });
+
+  test('a thin cluster returns null, never a fabricated number', async () => {
+    const { computeClusterReliability } = await import('../src/nambikai/engine/cluster.js');
+
+    assert.equal(
+      computeClusterReliability({
+        contributions: Array.from({ length: 6 }, () => ({ status: 'PAID', daysLate: 0 })),
+        activeMembers: 4,
+        everMembers: 4,
+        completedCycles: 3,
+      }),
+      null,
+      'six observations must not produce a confident percentage',
+    );
+
+    assert.equal(
+      computeClusterReliability({
+        contributions: Array.from({ length: 30 }, () => ({ status: 'PAID', daysLate: 0 })),
+        activeMembers: 2,
+        everMembers: 2,
+        completedCycles: 15,
+      }),
+      null,
+      'a two-person group is not a cluster',
+    );
+
+    assert.ok(
+      computeClusterReliability({
+        contributions: Array.from({ length: 30 }, () => ({ status: 'PAID', daysLate: 0 })),
+        activeMembers: 5,
+        everMembers: 5,
+        completedCycles: 12,
+      }),
+      'sufficient evidence must produce a signal',
+    );
+  });
+
+  test('you cannot opt in to a group you do not belong to', async () => {
+    const lakshmi = await signIn('lakshmi@paytm.test');
+    const karthik = await signIn('karthik@paytm.test');
+    const theirs = (await statusFor(karthik.token)).body.eligibleClusters[0];
+    assert.ok(theirs);
+
+    const res = await optIn(lakshmi.token, theirs.groupId);
+    assert.equal(res.status, 404, 'a non-member must not be able to opt into a group signal');
+  });
+
+  test('ARCHITECTURAL: the scorecard cannot reach the cluster engine', async () => {
+    const src = fs.readFileSync(
+      path.join(BACKEND_ROOT, 'src', 'nambikai', 'engine', 'scorecard.js'),
+      'utf8',
+    );
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    // It must not IMPORT the cluster layer...
+    assert.ok(
+      !/from\s+['"][^'"]*cluster[^'"]*['"]/i.test(code),
+      'scorecard.js must never import the cluster layer',
+    );
+    // ...nor call anything from it. Named precisely: "reliabilityBps" on its own
+    // is the payment-failure sub-signal inside the scorecard and has nothing to
+    // do with clusters, so banning the bare word would be a false positive.
+    assert.ok(
+      !/computeClusterReliability|clusterSignalForUser|clusterReliability/i.test(code),
+      'scorecard.js must not use cluster reliability data',
+    );
+    // The ONE permitted mention is the flag it sets to assert it saw none.
+    const mentions = code.match(/[A-Za-z]*[Cc]luster[A-Za-z]*/g) ?? [];
+    assert.deepEqual(
+      [...new Set(mentions)],
+      ['computedWithoutClusterData'],
+      'the only cluster reference allowed in the scorecard is the flag asserting it used none',
+    );
+  });
+});

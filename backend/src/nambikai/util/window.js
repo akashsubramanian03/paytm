@@ -14,6 +14,11 @@
  * Pure module: no Prisma, no Date.now(). Callers pass `asOf` explicitly.
  */
 
+/** "2026-08-21" — the UTC day a date falls in. */
+export function utcDayKey(date) {
+  return new Date(date).toISOString().slice(0, 10);
+}
+
 /** "2026-08" — the UTC month a date falls in. */
 export function utcMonthKey(date) {
   const d = new Date(date);

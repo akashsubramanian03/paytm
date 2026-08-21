@@ -36,7 +36,14 @@ import bcrypt from 'bcryptjs';
 import { buildReferenceId, pickAvatarColor } from '../src/lib/ids.js';
 import { formatINR } from '../src/lib/money.js';
 import { RECHARGE_PLANS, BILLERS } from './seed-catalogue.js';
-import { PERSONAS, GROUPS, BUSINESSES } from './seed-personas.js';
+import {
+  PERSONAS,
+  GROUPS,
+  BUSINESSES,
+  EVERYDAY_CONSENTS,
+  UNDERWRITING_CONSENTS,
+  CONSENT_PLAN,
+} from './seed-personas.js';
 
 const prisma = new PrismaClient();
 
@@ -650,6 +657,53 @@ async function main() {
     });
   }
   console.log(`  businesses         ${BUSINESSES.length}`);
+
+  // ---- consent ------------------------------------------------------------
+  // Granted thirty days ago, with a matching GRANT row in the audit log — a
+  // consent that appears from nowhere with no trail would undercut the whole
+  // point of the layer.
+  const grantedAt = new Date(NOW.getTime() - 30 * 86_400_000);
+  const consentRows = [];
+  const auditRows = [];
+
+  for (const p of PERSONAS) {
+    const plan = CONSENT_PLAN[p.key] ?? { everyday: false, underwriting: false };
+    const wanted = [
+      ...(plan.everyday ? EVERYDAY_CONSENTS : []),
+      ...(plan.underwriting ? UNDERWRITING_CONSENTS : []),
+    ];
+    for (const { dataType, purpose } of wanted) {
+      consentRows.push({
+        subjectType: 'USER',
+        subjectId: userByKey.get(p.key).id,
+        userId: userByKey.get(p.key).id,
+        dataType,
+        purpose,
+        scope: JSON.stringify({ windowDays: 365, partnerIds: [] }),
+        version: 1,
+        grantedAt,
+      });
+    }
+  }
+
+  await prisma.consentRecord.createMany({ data: consentRows });
+
+  for (const record of await prisma.consentRecord.findMany()) {
+    auditRows.push({
+      consentRecordId: record.id,
+      subjectType: record.subjectType,
+      subjectId: record.subjectId,
+      dataType: record.dataType,
+      purpose: record.purpose,
+      action: 'GRANT',
+      actor: 'USER',
+      actorId: record.userId,
+      requestId: `seed-${record.id}`,
+      createdAt: grantedAt,
+    });
+  }
+  await prisma.consentAuditLog.createMany({ data: auditRows });
+  console.log(`  consent records    ${consentRows.length}`);
 
   // ---- final balances -----------------------------------------------------
   for (const p of PERSONAS) {

@@ -21,8 +21,8 @@ const SERVICES = [
   { to: '/bills?category=DTH', icon: 'tv', label: 'DTH\nRecharge' },
   { to: '/bills?category=BROADBAND', icon: 'wifi', label: 'Broadband\nBill' },
   { to: '/bills?category=GAS', icon: 'flame', label: 'Book Gas\nCylinder' },
-  { to: '/bills?category=WATER', icon: 'droplet', label: 'Water\nBill' },
   { to: '/passbook', icon: 'passbook', label: 'Balance &\nHistory' },
+  { to: '/nambikai', icon: 'shield', label: 'Nambikai\nTrust' },
   { to: '/nambikai/groups', icon: 'users', label: 'Savings\nGroups' },
 ];
 

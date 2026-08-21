@@ -750,3 +750,208 @@ describe('seeded 18-month history', () => {
     }
   });
 });
+
+/* ==================================================== the consent gate ==== */
+
+/**
+ * The consent layer is only meaningful if it is a real gate. These tests prove
+ * three things a decorative toggle could not do:
+ *
+ *   - a blocked call names exactly what is missing, and is itself recorded
+ *   - the log records what was READ, not merely what was permitted
+ *   - the gate lives in the data layer, so an internal caller cannot walk past it
+ */
+describe('consent gate', () => {
+  const inputsFor = (token) => api('GET', '/nambikai/score/inputs', { token });
+
+  test('with no consent, scoring is refused and says precisely what it needs', async () => {
+    // Arjun is seeded having granted nothing at all.
+    const arjun = await signIn('arjun@paytm.test');
+    const res = await inputsFor(arjun.token);
+
+    assert.equal(res.status, 403);
+    assert.equal(res.body.error.code, 'CONSENT_REQUIRED');
+    assert.deepEqual(
+      [...res.body.error.details.missing].sort(),
+      ['GROUP_CONTRIBUTIONS', 'WALLET_LEDGER'],
+      'the wall must name the exact permissions it wants, not just refuse',
+    );
+    assert.equal(res.body.error.details.grantPath, '/api/v1/nambikai/consents');
+  });
+
+  test('a blocked call is itself audited, one DENY row per missing type', async () => {
+    const arjun = await signIn('arjun@paytm.test');
+    const before = await prisma.consentAuditLog.count({
+      where: { subjectId: arjun.userId, action: 'DENY' },
+    });
+
+    await inputsFor(arjun.token);
+
+    const after = await prisma.consentAuditLog.count({
+      where: { subjectId: arjun.userId, action: 'DENY' },
+    });
+    assert.equal(after - before, 2, 'a refusal must be as auditable as a read');
+
+    const rows = await prisma.consentAuditLog.findMany({
+      where: { subjectId: arjun.userId, action: 'DENY' },
+      orderBy: { createdAt: 'desc' },
+      take: 2,
+    });
+    assert.equal(new Set(rows.map((r) => r.requestId)).size, 1, 'one call, one requestId');
+    assert.ok(rows.every((r) => r.reason === 'MISSING_CONSENT'));
+    assert.ok(rows.every((r) => r.consentRecordId === null), 'a DENY references no consent');
+  });
+
+  test('granting the required permissions opens the gate', async () => {
+    const user = await makeUser();
+    assert.equal((await inputsFor(user.token)).status, 403, 'a new user starts closed');
+
+    for (const dataType of ['WALLET_LEDGER', 'GROUP_CONTRIBUTIONS']) {
+      const granted = await api('POST', '/nambikai/consents', {
+        token: user.token,
+        body: { dataType, purpose: 'HEALTH_SCORE' },
+      });
+      assert.equal(granted.status, 201);
+    }
+
+    const res = await inputsFor(user.token);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.ok(typeof res.body.inputsHash === 'string' && res.body.inputsHash.length === 64);
+  });
+
+  test('the log records what was read, not what was permitted', async () => {
+    // Karthik is seeded with BILL_PAYMENTS consent for UNDERWRITING, but a
+    // health-score run has no business reading biller identities.
+    const karthik = await signIn('karthik@paytm.test');
+    const res = await inputsFor(karthik.token);
+    assert.equal(res.status, 200);
+
+    const requestId = res.body.consent.requestId;
+    const rows = await prisma.consentAuditLog.findMany({ where: { requestId, action: 'USE' } });
+
+    assert.equal(rows.length, 2, 'exactly the two types this run needed');
+    assert.deepEqual(rows.map((r) => r.dataType).sort(), ['GROUP_CONTRIBUTIONS', 'WALLET_LEDGER']);
+    assert.ok(
+      !rows.some((r) => r.dataType === 'BILL_PAYMENTS'),
+      'a permitted-but-unread type must not appear as a disclosure',
+    );
+    assert.ok(rows.every((r) => r.artifactType === 'FINANCIAL_HEALTH_SCORE'));
+  });
+
+  test('revoking closes the gate again, without erasing what was disclosed', async () => {
+    const user = await makeUser();
+    for (const dataType of ['WALLET_LEDGER', 'GROUP_CONTRIBUTIONS']) {
+      await api('POST', '/nambikai/consents', {
+        token: user.token,
+        body: { dataType, purpose: 'HEALTH_SCORE' },
+      });
+    }
+    assert.equal((await inputsFor(user.token)).status, 200);
+
+    const list = await api('GET', '/nambikai/consents', { token: user.token });
+    const wallet = list.body.consents.find(
+      (c) => c.dataType === 'WALLET_LEDGER' && c.purpose === 'HEALTH_SCORE' && c.active,
+    );
+
+    const revoked = await api('DELETE', `/nambikai/consents/${wallet.id}`, { token: user.token });
+    assert.equal(revoked.status, 200);
+    assert.equal(revoked.body.revoked, true);
+
+    const after = await inputsFor(user.token);
+    assert.equal(after.status, 403);
+    assert.ok(after.body.error.details.missing.includes('WALLET_LEDGER'));
+
+    // The history of what was read is deliberately preserved.
+    const uses = await prisma.consentAuditLog.count({
+      where: { subjectId: user.user.id, action: 'USE' },
+    });
+    assert.ok(uses > 0, 'revoking must not erase the record of what was already read');
+  });
+
+  test('re-granting is a new decision, and granting twice is a no-op', async () => {
+    const user = await makeUser();
+
+    const first = await api('POST', '/nambikai/consents', {
+      token: user.token,
+      body: { dataType: 'WALLET_LEDGER', purpose: 'HEALTH_SCORE' },
+    });
+    assert.equal(first.status, 201);
+    assert.equal(first.body.consent.version, 1);
+
+    const again = await api('POST', '/nambikai/consents', {
+      token: user.token,
+      body: { dataType: 'WALLET_LEDGER', purpose: 'HEALTH_SCORE' },
+    });
+    assert.equal(again.status, 200);
+    assert.equal(again.body.created, false, 'toggling an active permission on must not duplicate it');
+
+    await api('DELETE', `/nambikai/consents/${first.body.consent.id}`, { token: user.token });
+
+    const third = await api('POST', '/nambikai/consents', {
+      token: user.token,
+      body: { dataType: 'WALLET_LEDGER', purpose: 'HEALTH_SCORE' },
+    });
+    assert.equal(third.status, 201);
+    assert.equal(third.body.consent.version, 2, 'a re-grant after a revoke is visibly a new decision');
+  });
+
+  test('THE BOUNDARY: an extractor called directly without consent throws', async () => {
+    // This is the test that distinguishes a real gate from middleware. If the
+    // check lived on the HTTP route, this call would happily return data.
+    const { extractGroupFeatures } = await import('../src/nambikai/features/group.features.js');
+    const { emptyToken } = await import('../src/nambikai/consent/consent.guard.js');
+    const karthik = await signIn('karthik@paytm.test');
+
+    await assert.rejects(
+      () =>
+        extractGroupFeatures(karthik.userId, {
+          token: emptyToken({ grantedDataTypes: new Set(['WALLET_LEDGER']) }),
+        }),
+      (err) => err.code === 'CONSENT_REQUIRED',
+      'a token without GROUP_CONTRIBUTIONS must not be able to read contributions',
+    );
+
+    await assert.rejects(
+      () => extractGroupFeatures(karthik.userId, {}),
+      (err) => err.code === 'CONSENT_REQUIRED',
+      'no token at all must also be refused',
+    );
+  });
+
+  test('the same data produces the same inputs hash', async () => {
+    const karthik = await signIn('karthik@paytm.test');
+    const a = await inputsFor(karthik.token);
+    const b = await inputsFor(karthik.token);
+    assert.equal(a.body.inputsHash, b.body.inputsHash, 'the hash tracks data, not the clock');
+  });
+
+  test('the audit feed is readable and scoped to the caller', async () => {
+    const karthik = await signIn('karthik@paytm.test');
+    const res = await api('GET', '/nambikai/consents/audit?limit=10', { token: karthik.token });
+
+    assert.equal(res.status, 200);
+    assert.ok(res.body.events.length > 0);
+    for (const event of res.body.events) {
+      assert.ok(typeof event.label === 'string' && event.label.length > 10, 'plain-language label');
+      assert.ok(['GRANT', 'REVOKE', 'USE', 'DENY', 'EXPIRE'].includes(event.action));
+    }
+
+    const ids = res.body.events.map((e) => e.id);
+    const leaked = await prisma.consentAuditLog.count({
+      where: { id: { in: ids }, subjectId: { not: karthik.userId } },
+    });
+    assert.equal(leaked, 0, 'the audit feed must be scoped to the caller');
+  });
+
+  test('the seed leaves the wall persona with nothing, and nobody opted into clusters', async () => {
+    const arjun = await signIn('arjun@paytm.test');
+    const arjunConsents = await prisma.consentRecord.count({ where: { userId: arjun.userId } });
+    assert.equal(arjunConsents, 0, 'the consent-wall persona must have granted nothing');
+
+    // Cluster scoring being opt-in is only meaningful if the seed leaves it off.
+    const clusterConsents = await prisma.consentRecord.count({
+      where: { dataType: 'CLUSTER_TRUST_SIGNAL', revokedAt: null },
+    });
+    assert.equal(clusterConsents, 0, 'cluster scoring must never be on by default');
+  });
+});

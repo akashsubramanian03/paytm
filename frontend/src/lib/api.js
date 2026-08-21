@@ -117,5 +117,13 @@ export const api = {
     payContribution: (id, contributionId) =>
       request('POST', `/nambikai/groups/${id}/contributions/${contributionId}/pay`),
     payoutCycle: (id) => request('GET', `/nambikai/groups/${id}/payout-cycle`),
+
+    consents: () => request('GET', '/nambikai/consents'),
+    consentCatalogue: () => request('GET', '/nambikai/consents/catalogue'),
+    grantConsent: (body) => request('POST', '/nambikai/consents', { body }),
+    revokeConsent: (id) => request('DELETE', `/nambikai/consents/${id}`),
+    consentAudit: (params) => request('GET', withQuery('/nambikai/consents/audit', params)),
+
+    scoreInputs: () => request('GET', '/nambikai/score/inputs'),
   },
 };

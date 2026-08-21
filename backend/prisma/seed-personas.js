@@ -370,3 +370,49 @@ export const BUSINESSES = [
     existingDebtRs: 180000,
   },
 ];
+
+/**
+ * Seeded consent.
+ *
+ * Most personas have granted the everyday permissions thirty days ago, so the
+ * demo does not dead-end on a wall the moment you sign in. Two deliberately have
+ * not, because the refusal path has to be demonstrable too:
+ *
+ *   - Arjun has granted NOTHING. Signing in as him shows the consent wall, which
+ *     is the honest state for someone who has not opted in — not a zero score.
+ *   - Vignesh has the everyday permissions but has NOT opted in to cluster
+ *     scoring, so his report carries cluster_signal: null with
+ *     CLUSTER_SIGNAL_NOT_CONSENTED rather than a number he never agreed to.
+ *
+ * Nobody is granted CLUSTER_TRUST_SIGNAL by default. It is opt-in, and a seed
+ * that quietly switched it on for everyone would make the opt-in meaningless.
+ */
+export const EVERYDAY_CONSENTS = [
+  { dataType: 'WALLET_LEDGER', purpose: 'HEALTH_SCORE' },
+  { dataType: 'GROUP_CONTRIBUTIONS', purpose: 'HEALTH_SCORE' },
+  { dataType: 'WALLET_LEDGER', purpose: 'ASSISTANT' },
+];
+
+/** Granted only by personas who are ready to approach a lender. */
+export const UNDERWRITING_CONSENTS = [
+  { dataType: 'WALLET_LEDGER', purpose: 'UNDERWRITING' },
+  { dataType: 'GROUP_CONTRIBUTIONS', purpose: 'UNDERWRITING' },
+  { dataType: 'BILL_PAYMENTS', purpose: 'UNDERWRITING' },
+];
+
+export const CONSENT_PLAN = {
+  // The hero is mid-application: everything a lender-facing report needs.
+  karthik: { everyday: true, underwriting: true },
+  sreeram: { everyday: true, underwriting: true },
+  ananya: { everyday: true, underwriting: false },
+  rahul: { everyday: true, underwriting: true },
+  priya: { everyday: true, underwriting: false },
+  divya: { everyday: true, underwriting: true },
+  meena: { everyday: true, underwriting: true },
+  // Opted out of cluster scoring specifically — see above.
+  vignesh: { everyday: true, underwriting: true },
+  // Personally impeccable, inside a CAUTION pool. She needs the appeal path.
+  lakshmi: { everyday: true, underwriting: true },
+  // Granted nothing at all. This is the consent wall.
+  arjun: { everyday: false, underwriting: false },
+};

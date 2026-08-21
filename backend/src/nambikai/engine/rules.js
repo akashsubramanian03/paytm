@@ -87,6 +87,91 @@ const GATES = [
   },
 ];
 
+/**
+ * Gates for a business. Same one-way property: they can only ever worsen a band.
+ * Applied only when a business feature vector is supplied, so an individual
+ * assessment can never be caught by an SME rule.
+ */
+/** At least this many of the six categories must have real evidence. */
+const SME_MIN_MEASURED_CATEGORIES = 3;
+
+const SME_GATES = [
+  {
+    /**
+     * The counterpart to weight redistribution, and the reason it is safe.
+     *
+     * Redistribution stops an absence being counted AGAINST a business. Without
+     * this gate it would start counting absence FOR them: an unregistered stall
+     * with no invoices and no filings would be scored on two categories and
+     * could come out LOW risk on almost no evidence. Absence should be neither
+     * a penalty nor a reward — it should be an honest "not enough to say".
+     */
+    code: 'GATE_SME_INSUFFICIENT_DATA',
+    test: (bf, scoreResult) =>
+      (scoreResult?.breakdown ?? []).filter((b) => b.measured).length < SME_MIN_MEASURED_CATEGORIES,
+    floor: () => RISK_BAND.MEDIUM,
+    blocksEligibility: true,
+    evidence: (bf, scoreResult) => ({
+      measuredCategories: (scoreResult?.breakdown ?? []).filter((b) => b.measured).length,
+      categoriesRequired: SME_MIN_MEASURED_CATEGORIES,
+      unmeasured: (scoreResult?.breakdown ?? [])
+        .filter((b) => !b.measured)
+        .map((b) => b.category),
+    }),
+  },
+  {
+    code: 'GATE_SME_OVERLEVERAGED',
+    test: (bf) => bf.existingDebtEstimatePaise > bf.monthlyRevenueEstimatePaise * 6,
+    floor: (bf) =>
+      bf.existingDebtEstimatePaise > bf.monthlyRevenueEstimatePaise * 12
+        ? RISK_BAND.HIGH
+        : RISK_BAND.MEDIUM,
+    evidence: (bf) => ({
+      debtInMonthsOfRevenue:
+        Math.round((bf.existingDebtEstimatePaise * 100) / Math.max(bf.monthlyRevenueEstimatePaise, 1)) / 100,
+    }),
+  },
+  {
+    code: 'GATE_SME_GST_LAPSED',
+    test: (bf) => bf.isRegistered && bf.recentLate >= 2,
+    floor: () => RISK_BAND.MEDIUM,
+    evidence: (bf) => ({ lateInLastSix: bf.recentLate, filings: bf.filingCount }),
+  },
+];
+
+export function applySmeRules(scoreResult, bf) {
+  let band = scoreResult.band;
+  let eligible = true;
+  const gates = [];
+  const codes = [];
+
+  for (const gate of SME_GATES) {
+    const triggered = Boolean(gate.test(bf, scoreResult));
+    const floor = triggered ? gate.floor(bf) : null;
+    gates.push({
+      code: gate.code,
+      triggered,
+      effect: triggered ? `band floored at ${floor}` : null,
+      evidence: triggered ? gate.evidence(bf, scoreResult) : null,
+    });
+    if (!triggered) continue;
+    band = worseOf(band, floor);
+    if (gate.blocksEligibility) eligible = false;
+    codes.push(emit(gate.code, gate.evidence(bf, scoreResult)));
+  }
+
+  if (bandRank(band) < bandRank(scoreResult.band)) band = scoreResult.band;
+
+  return {
+    band,
+    bandBeforeGates: scoreResult.band,
+    downgraded: band !== scoreResult.band,
+    eligible,
+    gates,
+    reasonCodes: inCatalogueOrder(codes),
+  };
+}
+
 export function applyRules(scoreResult, fv) {
   let band = scoreResult.band;
   let eligible = true;

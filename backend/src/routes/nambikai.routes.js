@@ -7,6 +7,7 @@
 import { Router } from 'express';
 import { requestId } from '../middleware/requestId.js';
 import assistantRoutes from './nambikai/assistant.routes.js';
+import businessRoutes from './nambikai/business.routes.js';
 import clusterRoutes from './nambikai/cluster.routes.js';
 import consentRoutes from './nambikai/consent.routes.js';
 import groupRoutes from './nambikai/groups.routes.js';
@@ -20,6 +21,7 @@ const router = Router();
 router.use(requestId);
 
 router.use('/assistant', assistantRoutes);
+router.use('/businesses', businessRoutes);
 router.use('/cluster', clusterRoutes);
 router.use('/consents', consentRoutes);
 router.use('/groups', groupRoutes);

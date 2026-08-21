@@ -362,6 +362,9 @@ export const BUSINESSES = [
     name: 'Meena Provisions',
     sector: 'RETAIL',
     gstNumber: '33AABCM9603R1ZM',
+    // Two late filings in the last six periods, so GST compliance is a real
+    // signal with a downside rather than a row of perfect ticks.
+    lateFilingMonths: [3, 5],
     city: 'Chennai',
     employeeCount: 3,
     monthlyRevenueRs: 62000,
@@ -391,6 +394,17 @@ export const EVERYDAY_CONSENTS = [
   { dataType: 'WALLET_LEDGER', purpose: 'HEALTH_SCORE' },
   { dataType: 'GROUP_CONTRIBUTIONS', purpose: 'HEALTH_SCORE' },
   { dataType: 'WALLET_LEDGER', purpose: 'ASSISTANT' },
+];
+
+/**
+ * Granted by business owners. SME_UNDERWRITING is deliberately its own purpose:
+ * consenting to a personal score never implies consenting to have your shop
+ * assessed, and vice versa.
+ */
+export const SME_CONSENTS = [
+  { dataType: 'WALLET_LEDGER', purpose: 'SME_UNDERWRITING' },
+  { dataType: 'BUSINESS_GST', purpose: 'SME_UNDERWRITING' },
+  { dataType: 'BUSINESS_INVOICES', purpose: 'SME_UNDERWRITING' },
 ];
 
 /** Granted only by personas who are ready to approach a lender. */

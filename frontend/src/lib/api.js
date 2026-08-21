@@ -146,5 +146,15 @@ export const api = {
     appeals: () => request('GET', '/nambikai/cluster/appeals'),
     createAppeal: (body) => request('POST', '/nambikai/cluster/appeals', { body }),
     withdrawAppeal: (id) => request('POST', `/nambikai/cluster/appeals/${id}/withdraw`),
+
+    businesses: () => request('GET', '/nambikai/businesses'),
+    business: (id) => request('GET', `/nambikai/businesses/${id}`),
+    businessScore: (id) => request('GET', `/nambikai/businesses/${id}/score`),
+    businessRecords: (id, params) =>
+      request('GET', withQuery(`/nambikai/businesses/${id}/records`, params)),
+    businessSuggestions: (id) =>
+      request('GET', `/nambikai/businesses/${id}/assistant/suggestions`),
+    businessAsk: (id, body) =>
+      request('POST', `/nambikai/businesses/${id}/assistant/ask`, { body }),
   },
 };

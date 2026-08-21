@@ -1361,3 +1361,194 @@ describe('cluster trust signal', () => {
     );
   });
 });
+
+/* ========================================================== the SME slice == */
+
+describe('SME slice', () => {
+  const businessesOf = (token) => api('GET', '/nambikai/businesses', { token });
+
+  test('a business is scored on its own records', async () => {
+    const meena = await signIn('meena@paytm.test');
+    const list = await businessesOf(meena.token);
+    assert.equal(list.status, 200);
+    const business = list.body.businesses[0];
+    assert.ok(business, 'the seeded shop owner must have a business');
+
+    const res = await api('GET', `/nambikai/businesses/${business.id}/score`, { token: meena.token });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const s = res.body.score;
+
+    assert.ok(s.value >= 0 && s.value <= 100);
+    assert.equal(s.breakdown.length, 6, 'the SME scorecard has six categories');
+    assert.equal(
+      s.breakdown.reduce((a, b) => a + b.weightBps, 0),
+      10_000,
+      'weights must sum to 10000 after redistribution',
+    );
+    assert.equal(
+      s.value,
+      Math.max(0, Math.min(100, Math.round(s.breakdown.reduce((a, b) => a + b.contributionBps, 0) / 100))),
+      'the SME score must be reproducible from its own breakdown',
+    );
+  });
+
+  test('SME assessment needs its own consent', async () => {
+    const meena = await signIn('meena@paytm.test');
+    const business = (await businessesOf(meena.token)).body.businesses[0];
+
+    // Find and revoke one of the business-scoped permissions.
+    const consents = await prisma.consentRecord.findMany({
+      where: { subjectType: 'BUSINESS', subjectId: business.id, dataType: 'BUSINESS_GST', revokedAt: null },
+    });
+    assert.ok(consents.length, 'the seed grants business-scoped consent');
+    await prisma.consentRecord.update({
+      where: { id: consents[0].id },
+      data: { revokedAt: new Date() },
+    });
+
+    const blocked = await api('GET', `/nambikai/businesses/${business.id}/score`, { token: meena.token });
+    assert.equal(blocked.status, 403);
+    assert.ok(blocked.body.error.details.missing.includes('BUSINESS_GST'));
+
+    // The owner's PERSONAL score is unaffected — the two are separate consents.
+    assert.equal((await api('GET', '/nambikai/score', { token: meena.token })).status, 200);
+
+    await prisma.consentRecord.update({
+      where: { id: consents[0].id },
+      data: { revokedAt: null },
+    });
+  });
+
+  test('an unregistered business is unmeasured, not penalised — and not rewarded either', async () => {
+    const karthik = await signIn('karthik@paytm.test');
+    const business = (await businessesOf(karthik.token)).body.businesses[0];
+    assert.ok(business);
+    assert.equal(business.gstNumber, null, 'the tea stall is deliberately unregistered');
+
+    const s = (await api('GET', `/nambikai/businesses/${business.id}/score`, { token: karthik.token }))
+      .body.score;
+
+    const compliance = s.breakdown.find((b) => b.category === 'SME_COMPLIANCE');
+    assert.equal(compliance.measured, false, 'having no filings is an absence of obligation');
+    assert.equal(compliance.weightBps, 0, 'and must not be counted against the business');
+
+    // The other half of the same principle: absence must not be a REWARD either.
+    // With only two measurable categories, no confident low-risk verdict.
+    const measured = s.breakdown.filter((b) => b.measured).length;
+    assert.ok(measured < 3);
+    assert.equal(s.gates.eligible, false, 'thin evidence must produce "not yet", not "low risk"');
+    assert.notEqual(s.band, 'LOW', 'a confident LOW on two categories would be dishonest');
+    assert.ok(s.reasonCodes.some((c) => c.code === 'GATE_SME_INSUFFICIENT_DATA'));
+  });
+
+  test('the owner’s commitments are their OWN record, never a group signal', async () => {
+    const meena = await signIn('meena@paytm.test');
+    const business = (await businessesOf(meena.token)).body.businesses[0];
+    const s = (await api('GET', `/nambikai/businesses/${business.id}/score`, { token: meena.token }))
+      .body.score;
+
+    const owner = s.breakdown.find((b) => b.category === 'SME_OWNER_COMMITMENTS');
+    assert.ok(owner.measured);
+    assert.match(owner.evidence.note ?? '', /owner’s own record/i);
+
+    // No cluster-attributed code may appear anywhere in an SME assessment.
+    for (const c of s.reasonCodes) {
+      assert.ok(!c.code.startsWith('CLUSTER_'), `${c.code} leaked into an SME score`);
+      assert.equal(c.attribution, 'INDIVIDUAL');
+    }
+  });
+
+  test('GST lateness is a real signal with a downside', async () => {
+    const meena = await signIn('meena@paytm.test');
+    const business = (await businessesOf(meena.token)).body.businesses[0];
+    const s = (await api('GET', `/nambikai/businesses/${business.id}/score`, { token: meena.token }))
+      .body.score;
+
+    const compliance = s.breakdown.find((b) => b.category === 'SME_COMPLIANCE');
+    assert.ok(compliance.measured);
+    assert.ok(compliance.evidence.filedLate > 0, 'the seeded shop files late sometimes');
+    assert.ok(s.reasonCodes.some((c) => c.code === 'SME_GST_LATE'));
+  });
+
+  test('business records are readable and scoped to the owner', async () => {
+    const meena = await signIn('meena@paytm.test');
+    const karthik = await signIn('karthik@paytm.test');
+    const business = (await businessesOf(meena.token)).body.businesses[0];
+
+    const mine = await api('GET', `/nambikai/businesses/${business.id}/records`, { token: meena.token });
+    assert.equal(mine.status, 200);
+    assert.ok(mine.body.records.length > 0);
+
+    const theirs = await api('GET', `/nambikai/businesses/${business.id}/records`, { token: karthik.token });
+    assert.equal(theirs.status, 404, 'another user must not read a business they do not own');
+
+    const score = await api('GET', `/nambikai/businesses/${business.id}/score`, { token: karthik.token });
+    assert.equal(score.status, 404);
+  });
+
+  test('the SME assistant answers from business facts and refuses off-topic', async () => {
+    const meena = await signIn('meena@paytm.test');
+    const business = (await businessesOf(meena.token)).body.businesses[0];
+
+    const onTopic = await api('POST', `/nambikai/businesses/${business.id}/assistant/ask`, {
+      token: meena.token,
+      body: { question: 'how healthy are my receivables?' },
+    });
+    assert.equal(onTopic.status, 200);
+    assert.equal(onTopic.body.refused, false);
+    assert.ok(onTopic.body.groundedIn.includes('days_customers_take_to_pay'));
+
+    const offTopic = await api('POST', `/nambikai/businesses/${business.id}/assistant/ask`, {
+      token: meena.token,
+      body: { question: 'what is the weather in Chennai' },
+    });
+    assert.equal(offTopic.body.refused, true);
+  });
+
+  test('SME gates only ever worsen a band', async () => {
+    const { scoreBusiness } = await import('../src/nambikai/engine/scorecard.js');
+    const { applySmeRules } = await import('../src/nambikai/engine/rules.js');
+    const { bandRank } = await import('../src/nambikai/engine/bands.js');
+
+    for (let i = 0; i < 100; i += 1) {
+      const bf = {
+        activeMonths: 1 + (i % 12),
+        isRegistered: i % 2 === 0,
+        monthlyInvoicedPaise: Array.from({ length: 12 }, (_, m) => (m + i) % 5 === 0 ? 0 : 100_000 * (1 + (i % 9))),
+        invoiceCount: i % 60,
+        settledCount: Math.max(0, (i % 60) - (i % 11)),
+        outstandingCount: i % 11,
+        outstandingPaise: 100_000 * (i % 11),
+        overdueCount: i % 7,
+        overduePaise: 50_000 * (i % 7),
+        dso: 10 + (i % 80),
+        filingCount: i % 18,
+        filedOnTime: Math.max(0, (i % 18) - (i % 5)),
+        filedLate: i % 5,
+        recentFilingCount: 6,
+        recentLate: i % 4,
+        declaredTurnoverPaise: Array.from({ length: 12 }, () => 100_000 * (1 + (i % 7))),
+        monthlyRevenueEstimatePaise: 100_000 * (1 + (i % 20)),
+        monthlyInflowEstimatePaise: 100_000 * (1 + (i % 18)),
+        receivablesEstimatePaise: 100_000 * (i % 30),
+        existingDebtEstimatePaise: 100_000 * (i % 200),
+        employeeCount: i % 8,
+      };
+      const owner = i % 3 === 0
+        ? { rawBps: 0, sampleCount: 0, evidence: {} }
+        : { rawBps: (i * 137) % 10_000, sampleCount: 10, evidence: {} };
+
+      const scored = scoreBusiness(bf, owner);
+      const ruled = applySmeRules(scored, bf);
+      assert.ok(
+        bandRank(ruled.band) >= bandRank(scored.band),
+        `an SME gate improved a band at iteration ${i}`,
+      );
+      assert.equal(
+        scored.breakdown.reduce((a, b) => a + b.weightBps, 0),
+        10_000,
+        `weights drifted at iteration ${i}`,
+      );
+    }
+  });
+});

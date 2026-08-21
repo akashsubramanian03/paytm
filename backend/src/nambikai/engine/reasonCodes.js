@@ -22,7 +22,7 @@
  *
  * PURE MODULE.
  */
-import { ATTRIBUTION, CATEGORY, POLARITY } from '../constants.js';
+import { ATTRIBUTION, CATEGORY, POLARITY, SME_CATEGORY } from '../constants.js';
 
 const { POSITIVE, NEGATIVE, NEUTRAL } = POLARITY;
 const { INDIVIDUAL, CLUSTER } = ATTRIBUTION;
@@ -266,6 +266,113 @@ export const REASON_CODES = {
     polarity: NEGATIVE,
     attribution: INDIVIDUAL,
     affectsScore: true,
+  },
+
+  /* ---------------------------------------------------------------- SME --- */
+  SME_REVENUE_STEADY: {
+    label: 'Invoiced revenue is steady month to month',
+    category: SME_CATEGORY.SME_REVENUE_STABILITY,
+    polarity: POSITIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  SME_REVENUE_VOLATILE: {
+    label: 'Invoiced revenue swings sharply between months',
+    category: SME_CATEGORY.SME_REVENUE_STABILITY,
+    polarity: NEGATIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  SME_INFLOW_STEADY: {
+    label: 'Customers keep buying, month after month',
+    category: SME_CATEGORY.SME_INFLOW_CONSISTENCY,
+    polarity: POSITIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  SME_RECEIVABLES_HEALTHY: {
+    label: 'Customers settle quickly',
+    category: SME_CATEGORY.SME_RECEIVABLES_QUALITY,
+    polarity: POSITIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  SME_RECEIVABLES_OVERDUE: {
+    label: 'A meaningful share of invoices is overdue',
+    category: SME_CATEGORY.SME_RECEIVABLES_QUALITY,
+    polarity: NEGATIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  SME_LOW_LEVERAGE: {
+    label: 'Existing debt is small relative to revenue',
+    category: SME_CATEGORY.SME_LEVERAGE,
+    polarity: POSITIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  SME_HIGH_LEVERAGE: {
+    label: 'Existing debt is large relative to revenue',
+    category: SME_CATEGORY.SME_LEVERAGE,
+    polarity: NEGATIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  SME_GST_CLEAN: {
+    label: 'Every GST return filed on time',
+    category: SME_CATEGORY.SME_COMPLIANCE,
+    polarity: POSITIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  SME_GST_LATE: {
+    label: 'Recent GST returns were filed late',
+    category: SME_CATEGORY.SME_COMPLIANCE,
+    polarity: NEGATIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  SME_UNREGISTERED: {
+    label: 'Not GST-registered',
+    category: SME_CATEGORY.SME_COMPLIANCE,
+    polarity: NEUTRAL,
+    attribution: INDIVIDUAL,
+    affectsScore: false,
+    guidance:
+      'Many small businesses are below the registration threshold. Nambikai does not count the absence of filings against you — the weight moves to what it can see.',
+  },
+  SME_OWNER_RELIABLE: {
+    label: 'The owner keeps their own savings-group commitments',
+    category: SME_CATEGORY.SME_OWNER_COMMITMENTS,
+    polarity: POSITIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+    guidance:
+      'This is the owner’s OWN record. It is never another member’s behaviour, and never a group-level signal.',
+  },
+
+  GATE_SME_INSUFFICIENT_DATA: {
+    label: 'Not enough business records to assess yet',
+    category: null,
+    polarity: NEUTRAL,
+    attribution: INDIVIDUAL,
+    affectsScore: false,
+    guidance:
+      'Redistributing weight stops an absence being counted against you, but it cannot manufacture evidence. With only a couple of measurable areas, Nambikai says "not yet" rather than issuing a confident low-risk assessment built on very little.',
+  },
+  GATE_SME_OVERLEVERAGED: {
+    label: 'Debt is very large relative to revenue',
+    category: null,
+    polarity: NEGATIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: false,
+  },
+  GATE_SME_GST_LAPSED: {
+    label: 'GST filing has repeatedly lapsed',
+    category: null,
+    polarity: NEGATIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: false,
   },
 
   /* -------------------------------------------------------------- gates --- */

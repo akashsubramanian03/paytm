@@ -42,6 +42,7 @@ import {
   BUSINESSES,
   EVERYDAY_CONSENTS,
   UNDERWRITING_CONSENTS,
+  SME_CONSENTS,
   CONSENT_PLAN,
 } from './seed-personas.js';
 
@@ -639,8 +640,9 @@ async function main() {
   console.log(`  contributions      ${contributionRows.length}`);
 
   // ---- businesses ---------------------------------------------------------
+  const businessByKey = new Map();
   for (const b of BUSINESSES) {
-    await prisma.business.create({
+    const created = await prisma.business.create({
       data: {
         ownerId: userByKey.get(b.ownerKey).id,
         name: b.name,
@@ -655,8 +657,78 @@ async function main() {
         existingDebtEstimatePaise: b.existingDebtRs * RUPEE,
       },
     });
+    businessByKey.set(b.key, created);
+  }
+  // ---- the SME financial data layer -------------------------------------
+  // Mock GST filings and invoices. These never touch Account or LedgerEntry, so
+  // the wallet's whole-database invariants are untouched by the SME slice.
+  const recordRows = [];
+  for (const b of BUSINESSES) {
+    const business = businessByKey.get(b.key);
+    if (!b.gstNumber) continue; // an unregistered stall files nothing
+
+    // 18 monthly GST filings, a couple of them late for the persona who needs a
+    // compliance signal to exist.
+    for (let m = 17; m >= 1; m -= 1) {
+      const periodStart = monthsAgo(m, 1, 0, 0);
+      const periodEnd = monthsAgo(m - 1, 1, 0, 0);
+      const late = b.lateFilingMonths?.includes(m) ?? false;
+      recordRows.push({
+        businessId: business.id,
+        kind: 'GST_FILING',
+        periodStart,
+        periodEnd,
+        amountPaise: Math.round(b.monthlyRevenueRs * RUPEE * (0.85 + rand() * 0.3)),
+        status: late ? 'LATE' : 'FILED',
+        dueAt: daysAfter(periodEnd, 20, 18, 0),
+        settledAt: daysAfter(periodEnd, late ? randInt(26, 40) : randInt(8, 19), 12, 0),
+        metadata: JSON.stringify({ simulated: true, gstin: b.gstNumber }),
+      });
+    }
+
+    // Trade invoices, with a realistic spread of settled, pending and overdue.
+    const customers = ['Anna Nagar Retail', 'Mylapore Traders', 'Adyar Stores', 'T Nagar Bazaar', 'Velachery Mart'];
+    for (let m = 11; m >= 0; m -= 1) {
+      const count = randInt(6, 9);
+      for (let i = 0; i < count; i += 1) {
+        const issued = monthsAgo(m, randInt(1, 27), 11, 0);
+        const dueAt = daysAfter(issued, 30, 18, 0);
+        const roll = rand();
+        // Older invoices have mostly settled; recent ones are still in flight.
+        let status = 'PAID';
+        let settledAt = daysAfter(issued, randInt(8, 34), 14, 0);
+        if (m <= 1 && roll < 0.45) {
+          status = 'PENDING';
+          settledAt = null;
+        } else if (roll > 0.9) {
+          status = 'OVERDUE';
+          settledAt = null;
+        }
+        if (settledAt && settledAt > NOW) {
+          status = 'PENDING';
+          settledAt = null;
+        }
+        recordRows.push({
+          businessId: business.id,
+          kind: 'INVOICE',
+          periodStart: issued,
+          periodEnd: dueAt,
+          amountPaise: randInt(4000, 26000) * RUPEE,
+          status,
+          counterpartyName: customers[Math.floor(rand() * customers.length)],
+          dueAt,
+          settledAt,
+          metadata: JSON.stringify({ simulated: true }),
+        });
+      }
+    }
+  }
+
+  for (const batch of chunk(recordRows, 500)) {
+    await prisma.businessRecord.createMany({ data: batch });
   }
   console.log(`  businesses         ${BUSINESSES.length}`);
+  console.log(`  business records   ${recordRows.length}`);
 
   // ---- consent ------------------------------------------------------------
   // Granted thirty days ago, with a matching GRANT row in the audit log — a
@@ -677,6 +749,25 @@ async function main() {
         subjectType: 'USER',
         subjectId: userByKey.get(p.key).id,
         userId: userByKey.get(p.key).id,
+        dataType,
+        purpose,
+        scope: JSON.stringify({ windowDays: 365, partnerIds: [] }),
+        version: 1,
+        grantedAt,
+      });
+    }
+  }
+
+  // Business consents are held against the BUSINESS as subject, granted by its
+  // owner — so revoking a personal permission does not silently disable an SME
+  // assessment, and vice versa.
+  for (const b of BUSINESSES) {
+    const business = businessByKey.get(b.key);
+    for (const { dataType, purpose } of SME_CONSENTS) {
+      consentRows.push({
+        subjectType: 'BUSINESS',
+        subjectId: business.id,
+        userId: userByKey.get(b.ownerKey).id,
         dataType,
         purpose,
         scope: JSON.stringify({ windowDays: 365, partnerIds: [] }),

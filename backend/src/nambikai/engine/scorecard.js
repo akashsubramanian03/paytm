@@ -40,6 +40,9 @@ import {
   CATEGORY,
   CATEGORY_KEYS,
   CATEGORY_WEIGHTS_BPS,
+  SME_CATEGORY,
+  SME_CATEGORY_KEYS,
+  SME_CATEGORY_WEIGHTS_BPS,
 } from '../constants.js';
 import {
   clamp,
@@ -429,6 +432,199 @@ export function scoreUser(fv) {
      * into the individual score has to delete that assertion to compile, which
      * makes the change visible in review instead of silent.
      */
+    computedWithoutClusterData: true,
+  };
+}
+
+/* ============================================================== SME score == */
+
+/**
+ * The business scorecard.
+ *
+ * Same shape, same rules, same fairness properties as the individual one: fixed
+ * category order, pro-rata weight redistribution for anything unmeasured, one
+ * rounding at the end, and a reason code with evidence for every material
+ * contribution.
+ *
+ * SME_OWNER_COMMITMENTS is the deliberate bridge between the two engines. It is
+ * the OWNER'S OWN savings-group record — their behaviour, not their group's and
+ * not another member's. A business run by someone who keeps their commitments is
+ * evidence about that business; a business run by someone whose neighbours do
+ * not is not.
+ */
+function smeRevenueStability(bf, codes) {
+  const n = Math.max(bf.activeMonths, 1);
+  const invoiced = recent(bf.monthlyInvoicedPaise, n).filter((v) => v > 0);
+  if (invoiced.length < 2) {
+    return { rawBps: 0, sampleCount: 0, evidence: { monthsInvoiced: invoiced.length } };
+  }
+
+  const invoiceStabilityBps = clampBps(BPS_MAX - cvBps(invoiced));
+  // Turnover declared to the state is a second, independent view of the same
+  // revenue. Blending them is more robust than trusting either alone.
+  const declared = bf.declaredTurnoverPaise.filter((v) => v > 0);
+  const declaredStabilityBps = declared.length >= 2 ? clampBps(BPS_MAX - cvBps(declared)) : null;
+
+  const rawBps = blend([
+    [invoiceStabilityBps, 70],
+    [declaredStabilityBps, 30],
+  ]);
+
+  const evidence = {
+    monthsInvoiced: invoiced.length,
+    invoiceVolatilityBps: cvBps(invoiced),
+    invoiceCount: bf.invoiceCount,
+  };
+  if (invoiceStabilityBps >= 7000) codes.push(emit('SME_REVENUE_STEADY', evidence));
+  else if (invoiceStabilityBps < 5000) codes.push(emit('SME_REVENUE_VOLATILE', evidence));
+
+  return { rawBps, sampleCount: invoiced.length, evidence };
+}
+
+function smeInflowConsistency(bf, codes) {
+  const n = Math.max(bf.activeMonths, 1);
+  const invoiced = recent(bf.monthlyInvoicedPaise, n);
+  const monthsWithSales = invoiced.filter((v) => v > 0).length;
+  const coverageBps = ratioBps(monthsWithSales, n);
+  const settlementBps = ratioBps(bf.settledCount, Math.max(bf.invoiceCount, 1));
+
+  const rawBps = blend([
+    [coverageBps, 60],
+    [settlementBps, 40],
+  ]);
+  const evidence = { monthsWithSales, monthsObserved: n, settled: bf.settledCount, invoices: bf.invoiceCount };
+  if (coverageBps >= 9000) codes.push(emit('SME_INFLOW_STEADY', evidence));
+  return { rawBps, sampleCount: bf.invoiceCount, evidence };
+}
+
+function smeReceivablesQuality(bf, codes) {
+  if (!bf.invoiceCount) return { rawBps: 0, sampleCount: 0, evidence: {} };
+
+  // 90 days is the point at which a receivable stops being working capital.
+  const dsoBps = bf.dso === null ? null : clampBps(BPS_MAX - Math.round((bf.dso * BPS_MAX) / 90));
+  const overdueRatioBps = ratioBps(bf.overdueCount, bf.invoiceCount);
+  const rawBps = blend([
+    [dsoBps, 60],
+    [clampBps(BPS_MAX - overdueRatioBps), 40],
+  ]);
+
+  const evidence = {
+    daysSalesOutstanding: bf.dso,
+    overdueCount: bf.overdueCount,
+    outstandingCount: bf.outstandingCount,
+    invoiceCount: bf.invoiceCount,
+  };
+  if (bf.dso !== null && bf.dso <= 30) codes.push(emit('SME_RECEIVABLES_HEALTHY', evidence));
+  if (overdueRatioBps >= 2000) codes.push(emit('SME_RECEIVABLES_OVERDUE', evidence));
+
+  return { rawBps, sampleCount: bf.invoiceCount, evidence };
+}
+
+function smeLeverage(bf, codes) {
+  const monthlyRevenue = Math.max(bf.monthlyRevenueEstimatePaise, 1);
+  // Debt expressed in months of revenue, which is what a lender actually asks.
+  const monthsOfRevenue = Math.round((bf.existingDebtEstimatePaise * 100) / monthlyRevenue) / 100;
+  const rawBps = clampBps(
+    BPS_MAX - Math.round((bf.existingDebtEstimatePaise * BPS_MAX) / (monthlyRevenue * 12)),
+  );
+
+  const evidence = {
+    debtInMonthsOfRevenue: monthsOfRevenue,
+    existingDebtPaise: bf.existingDebtEstimatePaise,
+    monthlyRevenuePaise: bf.monthlyRevenueEstimatePaise,
+  };
+  if (monthsOfRevenue >= 6) codes.push(emit('SME_HIGH_LEVERAGE', evidence));
+  else if (monthsOfRevenue <= 2) codes.push(emit('SME_LOW_LEVERAGE', evidence));
+
+  return { rawBps, sampleCount: 1, evidence };
+}
+
+function smeCompliance(bf, codes) {
+  // An unregistered business files nothing. That is not non-compliance, it is
+  // an absence of obligation, so the category is unmeasured and its weight moves
+  // elsewhere rather than scoring zero.
+  if (!bf.isRegistered || !bf.filingCount) {
+    codes.push(emit('SME_UNREGISTERED', { isRegistered: bf.isRegistered }));
+    return { rawBps: 0, sampleCount: 0, evidence: { isRegistered: bf.isRegistered } };
+  }
+
+  const onTimeBps = ratioBps(bf.filedOnTime, bf.filingCount);
+  const rawBps = clampBps(onTimeBps - bf.recentLate * 1500);
+  const evidence = {
+    filings: bf.filingCount,
+    filedOnTime: bf.filedOnTime,
+    filedLate: bf.filedLate,
+    lateInLastSix: bf.recentLate,
+  };
+  if (bf.recentLate === 0 && bf.filedLate === 0) codes.push(emit('SME_GST_CLEAN', evidence));
+  else if (bf.recentLate >= 1) codes.push(emit('SME_GST_LATE', evidence));
+
+  return { rawBps, sampleCount: bf.filingCount, evidence };
+}
+
+function smeOwnerCommitments(ownerCommitments, codes) {
+  if (!ownerCommitments || ownerCommitments.sampleCount === 0) {
+    codes.push(emit('NO_GROUP_HISTORY', ownerCommitments?.evidence ?? {}));
+    return { rawBps: 0, sampleCount: 0, evidence: ownerCommitments?.evidence ?? {} };
+  }
+  codes.push(emit('SME_OWNER_RELIABLE', ownerCommitments.evidence));
+  return ownerCommitments;
+}
+
+const SME_CATEGORY_FN = {
+  [SME_CATEGORY.SME_REVENUE_STABILITY]: smeRevenueStability,
+  [SME_CATEGORY.SME_INFLOW_CONSISTENCY]: smeInflowConsistency,
+  [SME_CATEGORY.SME_RECEIVABLES_QUALITY]: smeReceivablesQuality,
+  [SME_CATEGORY.SME_LEVERAGE]: smeLeverage,
+  [SME_CATEGORY.SME_COMPLIANCE]: smeCompliance,
+};
+
+/**
+ * @param {object} bf                business features
+ * @param {object} ownerCommitments  the OWNER's own COMMITMENTS result, reused verbatim
+ */
+export function scoreBusiness(bf, ownerCommitments) {
+  const codes = [];
+  const parts = {};
+
+  for (const key of SME_CATEGORY_KEYS) {
+    parts[key] =
+      key === SME_CATEGORY.SME_OWNER_COMMITMENTS
+        ? smeOwnerCommitments(ownerCommitments, codes)
+        : SME_CATEGORY_FN[key](bf, codes);
+  }
+
+  const measured = new Set(SME_CATEGORY_KEYS.filter((key) => parts[key].sampleCount > 0));
+  const { weights, redistributed } = redistributeWeights(
+    SME_CATEGORY_KEYS,
+    SME_CATEGORY_WEIGHTS_BPS,
+    measured,
+  );
+
+  if (redistributed.length) {
+    codes.push(emit('WEIGHT_REDISTRIBUTED', { unmeasuredCategories: redistributed, adjustedWeightsBps: weights }));
+  }
+
+  const breakdown = SME_CATEGORY_KEYS.map((key) => ({
+    category: key,
+    weightBps: weights[key],
+    baseWeightBps: SME_CATEGORY_WEIGHTS_BPS[key],
+    rawBps: parts[key].rawBps,
+    contributionBps: Math.round((parts[key].rawBps * weights[key]) / BPS_MAX),
+    sampleCount: parts[key].sampleCount,
+    measured: measured.has(key),
+    evidence: parts[key].evidence,
+    reasonCodes: codes.filter((c) => c.category === key).map((c) => c.code),
+  }));
+
+  const score = clamp(Math.round(sumInt(breakdown.map((b) => b.contributionBps)) / 100), 0, 100);
+
+  return {
+    score,
+    band: scoreToBand(score),
+    grade: scoreToGrade(score),
+    breakdown,
+    reasonCodes: inCatalogueOrder(codes),
     computedWithoutClusterData: true,
   };
 }

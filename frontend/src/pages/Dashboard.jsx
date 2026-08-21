@@ -23,7 +23,7 @@ const SERVICES = [
   { to: '/bills?category=GAS', icon: 'flame', label: 'Book Gas\nCylinder' },
   { to: '/bills?category=WATER', icon: 'droplet', label: 'Water\nBill' },
   { to: '/passbook', icon: 'passbook', label: 'Balance &\nHistory' },
-  { to: '/bills', icon: 'chevronRight', label: 'View\nMore' },
+  { to: '/nambikai/groups', icon: 'users', label: 'Savings\nGroups' },
 ];
 
 export default function Dashboard() {

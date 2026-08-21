@@ -102,4 +102,20 @@ export const api = {
   recharge: (body) => request('POST', '/payments/recharge', { body }),
   billers: (params) => request('GET', withQuery('/payments/billers', params)),
   payBill: (body) => request('POST', '/payments/bill', { body }),
+
+  // Nambikai gets its own namespace rather than ~30 more entries on this flat
+  // object. A deliberate deviation from the convention above, justified by count.
+  nambikai: {
+    groups: () => request('GET', '/nambikai/groups'),
+    group: (id) => request('GET', `/nambikai/groups/${id}`),
+    createGroup: (body) => request('POST', '/nambikai/groups', { body }),
+    addMember: (id, body) => request('POST', `/nambikai/groups/${id}/members`, { body }),
+    removeMember: (id, userId) =>
+      request('DELETE', `/nambikai/groups/${id}/members/${userId}`),
+    contributions: (id, params) =>
+      request('GET', withQuery(`/nambikai/groups/${id}/contributions`, params)),
+    payContribution: (id, contributionId) =>
+      request('POST', `/nambikai/groups/${id}/contributions/${contributionId}/pay`),
+    payoutCycle: (id) => request('GET', `/nambikai/groups/${id}/payout-cycle`),
+  },
 };

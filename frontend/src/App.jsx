@@ -17,6 +17,10 @@ import Scan from './pages/Scan.jsx';
 import Profile from './pages/Profile.jsx';
 import Success from './pages/Success.jsx';
 
+import Groups from './pages/nambikai/Groups.jsx';
+import GroupDetail from './pages/nambikai/GroupDetail.jsx';
+import CreateGroup from './pages/nambikai/CreateGroup.jsx';
+
 export default function App() {
   return (
     <>
@@ -44,6 +48,11 @@ export default function App() {
           <Route path="scan" element={<Scan />} />
           <Route path="profile" element={<Profile />} />
           <Route path="success" element={<Success />} />
+
+          {/* ---- Nambikai ---- */}
+          <Route path="nambikai/groups" element={<Groups />} />
+          <Route path="nambikai/groups/new" element={<CreateGroup />} />
+          <Route path="nambikai/groups/:id" element={<GroupDetail />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

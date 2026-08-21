@@ -40,6 +40,18 @@ const PATHS = {
   refresh: 'M20 12a8 8 0 1 1-2.6-5.9M20 4v4.5h-4.5',
   bag: 'M6 8h12l-1 12H7L6 8ZM9 8V6a3 3 0 0 1 6 0v2',
   gift: 'M3.5 11.5h17v8a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-8ZM2.5 7.5h19v4h-19v-4ZM12 7.5v13M12 7.5S10.5 3 8 3a2.2 2.2 0 0 0 0 4.5h4Zm0 0s1.5-4.5 4-4.5a2.2 2.2 0 0 1 0 4.5h-4Z',
+
+  // ---- Nambikai. Same 24-unit grid and 1.7 stroke as everything above; the
+  // component renders exactly one <path>, so multi-part glyphs are subpaths.
+  shield: 'M12 3.5l7 2.5v5.5c0 4.3-2.9 7.6-7 9.5-4.1-1.9-7-5.2-7-9.5V6l7-2.5Z',
+  sparkle: 'M12 3.5 13.6 9 19 10.5 13.6 12 12 17.5 10.4 12 5 10.5 10.4 9 12 3.5ZM18 16.5l.7 2.3 2.3.7-2.3.7-.7 2.3-.7-2.3-2.3-.7 2.3-.7.7-2.3Z',
+  chart: 'M4 20V4M4 20h16M8 20v-6M12.5 20v-10M17 20v-4',
+  trend: 'M4 16.5 9.5 11l3.5 3.5L20 7M20 7h-4.5M20 7v4.5',
+  link: 'M10 13.5a3.5 3.5 0 0 0 5 0l3-3a3.5 3.5 0 0 0-5-5l-1 1M14 10.5a3.5 3.5 0 0 0-5 0l-3 3a3.5 3.5 0 0 0 5 5l1-1',
+  document: 'M6.5 3.5h7L18 8v12a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 5 20V5a1.5 1.5 0 0 1 1.5-1.5ZM13 3.5V8h5M8.5 13h7M8.5 17h5',
+  store: 'M4 9.5h16v10a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-10ZM3 9.5 5 4h14l2 5.5M9.5 20.5v-6h5v6',
+  flag: 'M6 21V4M6 4.5h11l-2 3.5 2 3.5H6',
+  slash: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM5.6 5.6l12.8 12.8',
 };
 
 export default function Icon({ name, size = 22, className = '', strokeWidth = 1.7, ...rest }) {

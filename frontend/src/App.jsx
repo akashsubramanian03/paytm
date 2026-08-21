@@ -20,6 +20,7 @@ import Success from './pages/Success.jsx';
 import NambikaiHome from './pages/nambikai/NambikaiHome.jsx';
 import Consent from './pages/nambikai/Consent.jsx';
 import ConsentAudit from './pages/nambikai/ConsentAudit.jsx';
+import Assistant from './pages/nambikai/Assistant.jsx';
 import Groups from './pages/nambikai/Groups.jsx';
 import GroupDetail from './pages/nambikai/GroupDetail.jsx';
 import CreateGroup from './pages/nambikai/CreateGroup.jsx';
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="nambikai" element={<NambikaiHome />} />
           <Route path="nambikai/consent" element={<Consent />} />
           <Route path="nambikai/consent/audit" element={<ConsentAudit />} />
+          <Route path="nambikai/assistant" element={<Assistant />} />
           <Route path="nambikai/groups" element={<Groups />} />
           <Route path="nambikai/groups/new" element={<CreateGroup />} />
           <Route path="nambikai/groups/:id" element={<GroupDetail />} />

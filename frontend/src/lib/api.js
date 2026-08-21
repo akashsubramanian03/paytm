@@ -129,5 +129,8 @@ export const api = {
     recomputeScore: () => request('POST', '/nambikai/score/recompute'),
     scoreHistory: (limit) => request('GET', withQuery('/nambikai/score/history', { limit })),
     scoreSignals: () => request('GET', '/nambikai/score/signals'),
+
+    ask: (body) => request('POST', '/nambikai/assistant/ask', { body }),
+    assistantSuggestions: () => request('GET', '/nambikai/assistant/suggestions'),
   },
 };

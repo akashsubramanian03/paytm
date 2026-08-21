@@ -155,7 +155,7 @@ function NavTab({ to, icon, label, end }) {
 export default function AppLayout() {
   const { pathname } = useLocation();
   // Full-bleed screens hide the tab bar so the keypad/camera gets the room.
-  const immersive = /^\/(pay|scan|success)/.test(pathname);
+  const immersive = /^\/(pay|scan|success|nambikai\/assistant)/.test(pathname);
 
   return (
     <div className="min-h-dvh">

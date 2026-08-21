@@ -9,6 +9,7 @@ import userRoutes from './routes/user.routes.js';
 import accountRoutes from './routes/account.routes.js';
 import transactionRoutes from './routes/transaction.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
+import nambikaiRoutes from './routes/nambikai.routes.js';
 
 export function createApp() {
   const app = express();
@@ -45,6 +46,7 @@ export function createApp() {
   app.use('/api/v1/account', accountRoutes);
   app.use('/api/v1/transactions', transactionRoutes);
   app.use('/api/v1/payments', paymentRoutes);
+  app.use('/api/v1/nambikai', nambikaiRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

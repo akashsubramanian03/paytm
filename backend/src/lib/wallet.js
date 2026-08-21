@@ -11,11 +11,15 @@
  *     requests race.
  *  3. Both legs of a peer-to-peer transfer plus both passbook rows are written
  *     inside one prisma.$transaction — all of it commits, or none of it does.
+ *  4. Nambikai adds exactly ONE new money path here (payGroupContribution) rather
+ *     than writing ledger rows of its own. Nothing under src/nambikai/ may call
+ *     prisma.ledgerEntry.create — a test greps for it.
  */
 import prisma from './db.js';
 import { ApiError } from './errors.js';
 import { formatINR } from './money.js';
 import { buildReferenceId } from './ids.js';
+import { PAYABLE_CONTRIB_STATUSES } from '../nambikai/constants.js';
 import config from '../config.js';
 
 const TX_OPTIONS = { maxWait: 10_000, timeout: 20_000 };
@@ -195,5 +199,130 @@ export async function spendFromWallet({
       },
     });
     return { entry, balancePaise };
+  }, TX_OPTIONS);
+}
+
+/**
+ * Pay one savings-group contribution.
+ *
+ * This is an ordinary peer-to-peer transfer — Nambikai holds no money and runs no
+ * chit auction. The contribution row is an ANNOTATION on the debit leg, not a
+ * money movement of its own, which is why the wallet's three whole-database
+ * invariants keep covering it unchanged:
+ *   - two legs, one DEBIT and one CREDIT, sharing a referenceId
+ *   - category TRANSFER, so "every TRANSFER has exactly one debit and one credit"
+ *     already applies (no new category, no new invariant to maintain)
+ *   - both balances written by the same guarded helpers as every other transfer
+ *
+ * The contribution is marked PAID inside the SAME transaction as the money
+ * movement, so the two can never disagree. Reentrancy is handled the same way
+ * this file handles balances: a conditional updateMany that matches zero rows if
+ * the contribution has already been paid, aborting the whole transaction. Two
+ * simultaneous taps therefore cannot pay twice — the second one gets a 409 and
+ * no money moves.
+ */
+export async function payGroupContribution({
+  payerId,
+  payeeId,
+  contributionId,
+  amountPaise,
+  daysLate = 0,
+  note = null,
+  metadata = null,
+}) {
+  assertWithinLimits(amountPaise);
+  if (payerId === payeeId) {
+    throw ApiError.badRequest(
+      'SELF_CONTRIBUTION',
+      'This cycle pays out to you, so there is nothing to send.',
+    );
+  }
+
+  return prisma.$transaction(async (tx) => {
+    const payee = await tx.user.findUnique({
+      where: { id: payeeId },
+      include: { account: true },
+    });
+    if (!payee || !payee.account) {
+      throw ApiError.notFound('That group member is not on Paytm.');
+    }
+    const payer = await tx.user.findUnique({ where: { id: payerId } });
+    if (!payer) throw ApiError.notFound('Payer account not found.');
+
+    const payerBalance = await applyDebit(tx, payerId, amountPaise);
+    const payeeBalance = await applyCredit(tx, payeeId, amountPaise);
+
+    const referenceId = buildReferenceId();
+    const createdAt = new Date();
+    const entryMetadata = JSON.stringify({
+      simulated: true,
+      kind: 'GROUP_CONTRIBUTION',
+      ...(metadata ?? {}),
+    });
+
+    const debitEntry = await tx.ledgerEntry.create({
+      data: {
+        referenceId,
+        userId: payerId,
+        direction: 'DEBIT',
+        category: 'TRANSFER',
+        status: 'SUCCESS',
+        amountPaise,
+        balanceAfterPaise: payerBalance,
+        counterpartyId: payee.id,
+        counterpartyName: fullName(payee),
+        counterpartyHandle: payee.upiId,
+        note,
+        metadata: entryMetadata,
+        createdAt,
+      },
+    });
+
+    await tx.ledgerEntry.create({
+      data: {
+        referenceId,
+        userId: payeeId,
+        direction: 'CREDIT',
+        category: 'TRANSFER',
+        status: 'SUCCESS',
+        amountPaise,
+        balanceAfterPaise: payeeBalance,
+        counterpartyId: payer.id,
+        counterpartyName: fullName(payer),
+        counterpartyHandle: payer.upiId,
+        note,
+        metadata: entryMetadata,
+        createdAt,
+      },
+    });
+
+    // Conditional update: matches 0 rows if this contribution was already paid
+    // (or was waived), which rolls the whole transaction back including both
+    // ledger rows and both balance changes.
+    const marked = await tx.contribution.updateMany({
+      where: {
+        id: contributionId,
+        userId: payerId,
+        status: { in: PAYABLE_CONTRIB_STATUSES },
+      },
+      data: {
+        status: 'PAID',
+        paidAt: createdAt,
+        amountPaidPaise: amountPaise,
+        daysLate,
+        ledgerEntryId: debitEntry.id,
+      },
+    });
+
+    if (marked.count !== 1) {
+      throw ApiError.conflict(
+        'CONTRIBUTION_ALREADY_PAID',
+        'This contribution has already been paid.',
+      );
+    }
+
+    const contribution = await tx.contribution.findUnique({ where: { id: contributionId } });
+
+    return { referenceId, entry: debitEntry, contribution, balancePaise: payerBalance, payee };
   }, TX_OPTIONS);
 }

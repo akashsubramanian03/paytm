@@ -193,6 +193,8 @@ router.post(
       question: req.valid.body.question,
       history: req.valid.body.history,
       context,
+      // The model gets the scrubbed context; the templates get the numbers.
+      richCodes: result.scoreResult.reasonCodes,
     });
 
     res.json({

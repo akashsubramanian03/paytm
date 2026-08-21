@@ -360,6 +360,94 @@ below the viewfinder always works: paste a pay code, or type a UPI ID like
 
 <br>
 
+---
+
+## Nambikai — the trust layer
+
+**Nambikai** (நம்பிக்கை, Tamil for *trust*) sits on top of this wallet. It turns
+behaviour that already happens — savings-circle contributions, wallet activity,
+bills paid on time — into an explainable financial identity for people a credit
+bureau cannot see.
+
+It is **not** a lender. It never approves or declines credit, never holds lending
+risk, and never runs a chit auction. It produces a signal; a licensed partner
+decides.
+
+### What it does
+
+| | |
+|---|---|
+| **Savings groups** | Create a circle, track contributions, pay one. Contributions are ordinary wallet transfers — Nambikai holds no pot. |
+| **Behaviour engine** | A deterministic scorecard over six weighted categories, producing a 0–100 score with a full breakdown. |
+| **Explainability** | Every reason code carries the numbers it came from. The breakdown is published so the score can be reproduced by hand. |
+| **Consent gate** | Nothing is read without permission. The gate lives in the data layer, so an internal caller cannot walk past it. |
+| **AI assistant** | Explains what the engine already decided. It never originates a number. |
+| **Underwriting report** | What a lending partner would see — chosen by you, one partner at a time. |
+| **Cluster trust signal** | Opt-in, appealable, and never blended into your own score. |
+| **SME slice** | The same engine over GST filings, invoices and receivables. |
+
+### The demo, in order
+
+Every persona shares the password `password123`. Each one exists to show a
+different thing.
+
+**1. The pitch — `karthik@paytm.test`**
+A tea-stall owner with no formal credit history. Home → **Nambikai Trust**.
+He scores **83 / STRONG** on ten evidenced behaviours: 45 of 45 savings-group
+contributions paid on time, 18 months of daily receipts, a healthy buffer. Tap
+any reason code to see the numbers behind it. Then **Share with a lender** to see
+the report a partner would receive — including the line stating Nambikai holds no
+bureau record and makes no approval decision.
+
+**2. The fairness case — `lakshmi@paytm.test`**
+She has paid every contribution on time. Her trading pool has not. Go to
+**Group signal**: it is off by default. Turn it on, generate a report, and the
+pool shows **CAUTION** in its own separate card — while her own risk category
+stays **LOW** and no cluster code appears among her personal signals. Then file a
+dispute: the signal is withheld from the very next report, immediately.
+
+**3. The wall — `arjun@paytm.test`**
+Two months old, and has granted nothing. **Nambikai Trust** shows the consent
+wall naming exactly which permissions it would need — not a zero score. Grant
+them on the consent screen, then open **What Nambikai has read** to see every
+read, refusal and change, generated from the audit log.
+
+**4. The score that moves — `rahul@paytm.test`**
+Twelve good months, then lost work. Income fell, costs did not. He is down to a
+**3-day buffer** with 8 missed contributions, and two gates state plainly what is
+holding his band at MEDIUM.
+
+**5. Absence is not evidence — `priya@paytm.test`**
+She has never joined a savings circle. **Commitments** is greyed out at 0% weight
+and the other five categories are visibly *raised from* their base weights. Not
+having a group history scores strictly better than having a bad one.
+
+**6. The business — `meena@paytm.test`**
+**Your businesses → Meena Provisions.** Scored on 18 GST filings and ~90
+invoices, with real DSO and late-filing signals. Compare it with Karthik's
+unregistered tea stall, which returns *"not enough records to assess yet"*
+rather than a confident verdict built on two categories.
+
+### How it is kept honest
+
+- **The engine is pure.** A test reads every file in `src/nambikai/engine/` and
+  fails if one imports Prisma, reads the clock, or uses randomness.
+- **The LLM never originates a number.** It is called after the score, band and
+  gates already exist. A scrubbing guard runs before every API call and throws
+  rather than sending anything containing amounts, balances, references, UPI
+  handles, phone numbers or emails. **With no `ANTHROPIC_API_KEY` the product is
+  complete, not degraded** — deterministic templates write the prose, and every
+  artifact records which wrote it.
+- **The consent gate is in the data layer.** Feature extractors re-assert against
+  a consent token before querying, so a missing permission stops the query being
+  issued. Refusals are audited as carefully as reads.
+- **Cluster data cannot reach the individual score.** The decisive test asserts
+  the score and its inputs hash are byte-identical with cluster opt-in on and off.
+- **Money still only moves through `lib/wallet.js`.** The three whole-database
+  invariants are re-asserted against a database that has seen Nambikai writes.
+
+Run `npm test` for all of it.
+
 ## Scope
 
 This is a learning/demo project. It deliberately does **not** integrate any real payment

@@ -228,3 +228,86 @@ describe('the model can never originate a risk number', () => {
     assert.equal(renderAnswer(['IMPROVE'], context), renderAnswer(['IMPROVE'], context));
   });
 });
+
+/* ============================================ prose must never say undefined */
+
+/**
+ * These exist because the unit tests above all passed while the live assistant
+ * was answering "money retained in undefined of undefined months".
+ *
+ * The cause was structural: the model context deliberately strips evidence
+ * numbers, and the deterministic templates were being handed that same stripped
+ * list. Every fragment that cites a figure rendered undefined. A test that only
+ * checks "the template returns a string" cannot catch that — so these check the
+ * STRING ITSELF, the way a person would read it.
+ */
+describe('generated prose is fit to show a person', () => {
+  const RICH = [
+    { code: 'INCOME_STEADY', polarity: 'POSITIVE', evidence: { monthsObserved: 12 } },
+    { code: 'SAVINGS_CONSISTENT', polarity: 'POSITIVE', evidence: { monthsSavedSomething: 10, monthsObserved: 12 } },
+    { code: 'GROUP_PERFECT_RECORD', polarity: 'POSITIVE', evidence: { settledCycles: 43 } },
+    { code: 'LOW_EMERGENCY_BUFFER', polarity: 'NEGATIVE', evidence: { bufferDays: 9 } },
+    { code: 'GROUP_MISSED', polarity: 'NEGATIVE', evidence: { missed: 8, settledCycles: 21 } },
+  ];
+
+  const context = {
+    subject: { display_name: 'Karthik B.' },
+    score: { value: 83, band: 'LOW', grade: 'STRONG' },
+    categories: [],
+    reason_codes: RICH,
+    facts: { buffer_days: 84, active_groups: 2, settled_cycles: 43, on_time: 43, missed: 0, monthly_commitment_band: '₹2,500–₹5,000' },
+    gates: [],
+    eligible: true,
+    cluster_signal: null,
+  };
+
+  const readable = (text, label) => {
+    assert.ok(text && text.length > 20, `${label} produced nothing`);
+    assert.ok(!/undefined|null|NaN|\[object/.test(text), `${label} leaked a placeholder: ${text}`);
+    assert.ok(!/\{\{|\}\}|\$\{/.test(text), `${label} leaked template syntax: ${text}`);
+  };
+
+  test('the recommendation never leaks a placeholder', () => {
+    readable(renderRecommendation(context), 'renderRecommendation');
+  });
+
+  test('the personal summary never leaks a placeholder', () => {
+    readable(renderPersonalSummary(context), 'renderPersonalSummary');
+  });
+
+  test('every assistant intent produces readable prose', () => {
+    for (const intent of ['SCORE', 'IMPROVE', 'GROUPS', 'SAVINGS', 'BUFFER', 'AFFORD', 'SPENDING', 'INCOME']) {
+      readable(renderAnswer([intent], context), `renderAnswer(${intent})`);
+    }
+  });
+
+  test('prose stays readable when evidence is sparse', () => {
+    // Missing numbers must degrade to a sentence that still makes sense, not to
+    // "undefined". This is the shape the bug actually took.
+    const sparse = { ...context, reason_codes: RICH.map((c) => ({ ...c, evidence: {} })), facts: {} };
+    for (const intent of ['SCORE', 'IMPROVE', 'GROUPS', 'BUFFER', 'AFFORD']) {
+      readable(renderAnswer([intent], sparse), `sparse renderAnswer(${intent})`);
+    }
+    readable(renderRecommendation(sparse), 'sparse renderRecommendation');
+  });
+
+  test('the affordability answer names a real commitment band', () => {
+    const text = renderAnswer(['AFFORD'], context);
+    assert.match(text, /₹2,500–₹5,000/, 'it should cite the band it was given');
+    assert.ok(!/commit nothing/.test(text));
+  });
+
+  test('answerQuestion uses rich codes for the template when given them', async () => {
+    const scrubbed = {
+      ...context,
+      reason_codes: RICH.map((c) => ({ code: c.code, polarity: c.polarity })),
+    };
+    const withRich = await answerQuestion({
+      question: 'why is my score what it is?',
+      context: scrubbed,
+      richCodes: RICH,
+    });
+    readable(withRich.text, 'answerQuestion with richCodes');
+    assert.match(withRich.text, /10 of 12/, 'the figures must come from the rich codes');
+  });
+});

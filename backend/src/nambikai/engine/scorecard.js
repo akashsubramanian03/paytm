@@ -222,6 +222,8 @@ function commitments(fv, codes) {
     missed: group.missedCount,
     activeGroups: group.activeGroupCount,
     monthsInAnyGroup: group.monthsInAnyGroup,
+    savedPaise: group.savedPaise,
+    committedPerCyclePaise: group.committedPerCyclePaise,
   };
 
   // No circle, no evidence. Score nothing and let the weight move elsewhere —

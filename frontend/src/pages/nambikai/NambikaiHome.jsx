@@ -231,6 +231,32 @@ export default function NambikaiHome() {
             />
           </Link>
           <div className="hairline" />
+          <Link to="/nambikai/cluster" className="block">
+            <ListRow
+              icon={
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-navy">
+                  <Icon name="link" size={19} />
+                </span>
+              }
+              title="Group signal"
+              subtitle="Off unless you turn it on"
+              onClick={() => {}}
+            />
+          </Link>
+          <div className="hairline" />
+          <Link to="/nambikai/business" className="block">
+            <ListRow
+              icon={
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-navy">
+                  <Icon name="store" size={19} />
+                </span>
+              }
+              title="Your businesses"
+              subtitle="Assessed on their own records"
+              onClick={() => {}}
+            />
+          </Link>
+          <div className="hairline" />
           <Link to="/nambikai/consent" className="block">
             <ListRow
               icon={

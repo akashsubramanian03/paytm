@@ -88,9 +88,39 @@ function ordered(codes, polarity) {
     .sort((a, b) => (rank.get(a.code) ?? 999) - (rank.get(b.code) ?? 999));
 }
 
+/**
+ * Render one clause, falling back to the plain label if the figures are missing.
+ *
+ * Fragments cite specific numbers — "10 of 12 months" — which is the whole point
+ * of them. But a code can legitimately arrive without its evidence (a stripped
+ * model context, an older stored artifact, a caller that only had codes), and
+ * "money retained in undefined of undefined months" is far worse than the
+ * unspecific-but-true version. So a fragment that cannot produce a clean
+ * sentence degrades to the catalogue label rather than emitting a placeholder.
+ */
+function fragmentFor(code) {
+  const render = FRAGMENT[code.code];
+  if (!render) return null;
+  let text;
+  try {
+    text = render(code.evidence ?? {});
+  } catch {
+    text = null;
+  }
+  if (!text || /undefined|null|NaN/.test(text)) {
+    // The label is written as a standalone sentence, so lower-case it to sit
+    // inside a clause.
+    const label = labelOf(code.code);
+    return label ? label.charAt(0).toLowerCase() + label.slice(1) : null;
+  }
+  return text;
+}
+
 function clause(codes, polarity, limit) {
-  const picked = ordered(codes, polarity).slice(0, limit);
-  const parts = picked.map((c) => FRAGMENT[c.code](c.evidence ?? {}));
+  const parts = ordered(codes, polarity)
+    .slice(0, limit)
+    .map(fragmentFor)
+    .filter(Boolean);
   if (!parts.length) return null;
   if (parts.length === 1) return parts[0];
   return `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
@@ -123,7 +153,19 @@ export function renderRecommendation(context) {
 
   for (const gate of gates ?? []) {
     const line = GATE_SENTENCE[gate.code];
-    if (line) sentences.push(line(gate.evidence ?? {}));
+    if (!line) continue;
+    let text;
+    try {
+      text = line(gate.evidence ?? {});
+    } catch {
+      text = null;
+    }
+    // A gate with no evidence still has to be announced — just without figures.
+    if (!text || /undefined|null|NaN/.test(text)) {
+      const label = labelOf(gate.code);
+      text = `${label}, which holds this assessment back.`;
+    }
+    sentences.push(text);
   }
 
   if (cluster) {
@@ -169,7 +211,13 @@ export function renderAnswer(intents, context) {
   if (intents.includes('AFFORD')) {
     return [
       `Nambikai does not decide what you can borrow — a lender does, and it would use its own checks alongside this.`,
-      `What it can tell you: your score is ${score.value} out of 100, your balance covers roughly ${facts.buffer_days ?? 'an unknown number of'} days of your usual spending, and you currently commit ${facts.monthly_commitment_band ?? 'nothing'} a month to savings circles.`,
+      facts.buffer_days === null || facts.buffer_days === undefined
+        ? `What it can tell you: your score is ${score.value} out of 100.`
+        : `What it can tell you: your score is ${score.value} out of 100, and your balance covers roughly ${facts.buffer_days} days of your usual spending${
+            facts.monthly_commitment_band
+              ? `, with ${facts.monthly_commitment_band} a month going into savings circles`
+              : ''
+          }.`,
     ].join(' ');
   }
 
@@ -183,11 +231,17 @@ export function renderAnswer(intents, context) {
   }
 
   if (intents.includes('GROUPS') || intents.includes('SAVINGS')) {
-    return `You have ${facts.active_groups ?? 0} active savings ${facts.active_groups === 1 ? 'circle' : 'circles'}. Of ${facts.settled_cycles ?? 0} settled contributions, ${facts.on_time ?? 0} were on time and ${facts.missed ?? 0} were missed.`;
+    if (facts.settled_cycles === undefined || facts.settled_cycles === null) {
+      return 'I don’t have your savings-group record in your Nambikai data yet.';
+    }
+    return `You have ${facts.active_groups ?? 0} active savings ${facts.active_groups === 1 ? 'circle' : 'circles'}. Of ${facts.settled_cycles} settled contributions, ${facts.on_time ?? 0} were on time and ${facts.missed ?? 0} were missed.`;
   }
 
   if (intents.includes('BUFFER')) {
-    return `Your balance would cover about ${facts.buffer_days ?? 'an unknown number of'} days of your usual spending. Nambikai treats 45 days as a healthy buffer.`;
+    if (facts.buffer_days === undefined || facts.buffer_days === null) {
+      return 'I don’t have enough spending history in your Nambikai data to work out how long your balance would last.';
+    }
+    return `Your balance would cover about ${facts.buffer_days} days of your usual spending. Nambikai treats 45 days as a healthy buffer.`;
   }
 
   if (intents.includes('SCORE') || intents.includes('SPENDING') || intents.includes('INCOME')) {

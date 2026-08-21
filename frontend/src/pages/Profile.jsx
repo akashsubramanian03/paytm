@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { QRCodeCanvas } from 'qrcode.react';
 import { BrandBar } from '../components/AppLayout.jsx';
 import Icon from '../components/Icon.jsx';
@@ -188,6 +188,26 @@ export default function Profile() {
               onClick={() => navigate('/add-money')}
             />
           </div>
+        </Card>
+
+        <Card>
+          <Link to="/nambikai" className="block">
+            <ListRow
+              icon={<SettingIcon name="shield" />}
+              title="Nambikai trust profile"
+              subtitle="Your score, and what a lender would see"
+              onClick={() => {}}
+            />
+          </Link>
+          <div className="hairline" />
+          <Link to="/nambikai/consent" className="block">
+            <ListRow
+              icon={<SettingIcon name="lock" />}
+              title="Data & consent"
+              subtitle="Choose what Nambikai may read"
+              onClick={() => {}}
+            />
+          </Link>
         </Card>
 
         <Card className="overflow-hidden">

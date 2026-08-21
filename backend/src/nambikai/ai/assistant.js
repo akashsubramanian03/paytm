@@ -41,7 +41,15 @@ function assertsWrongScore(text, score) {
   return false;
 }
 
-export async function answerQuestion({ question, history = [], context }) {
+/**
+ * @param {object} args
+ * @param {Array}  [args.richCodes] reason codes WITH their evidence numbers.
+ *   The model context deliberately strips evidence, but the deterministic
+ *   templates need it to say "10 of 12 months" instead of "undefined of
+ *   undefined". Both paths work from the same code list; only the templates see
+ *   the figures.
+ */
+export async function answerQuestion({ question, history = [], context, richCodes }) {
   const { matched, onTopic } = classifyIntent(question);
 
   // Refused before any network call.
@@ -55,7 +63,7 @@ export async function answerQuestion({ question, history = [], context }) {
     };
   }
 
-  const template = renderAnswer(matched, context);
+  const template = renderAnswer(matched, richCodes ? { ...context, reason_codes: richCodes } : context);
   const groundedIn = Object.keys(context.facts ?? {});
 
   assertContextClean(context);

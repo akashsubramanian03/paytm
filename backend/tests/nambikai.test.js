@@ -829,12 +829,19 @@ describe('consent gate', () => {
     const requestId = res.body.consent.requestId;
     const rows = await prisma.consentAuditLog.findMany({ where: { requestId, action: 'USE' } });
 
-    assert.equal(rows.length, 2, 'exactly the two types this run needed');
-    assert.deepEqual(rows.map((r) => r.dataType).sort(), ['GROUP_CONTRIBUTIONS', 'WALLET_LEDGER']);
+    // Exactly what this run read — no more. The persona also holds
+    // BILL_PAYMENTS, but only for UNDERWRITING, and a health-score run has no
+    // business touching it.
+    assert.deepEqual(
+      rows.map((r) => r.dataType).sort(),
+      ['GROUP_CONTRIBUTIONS', 'LOAN_HISTORY', 'REPAYMENT_HISTORY', 'WALLET_LEDGER'],
+      'the log must name exactly the data types this run actually read',
+    );
     assert.ok(
       !rows.some((r) => r.dataType === 'BILL_PAYMENTS'),
-      'a permitted-but-unread type must not appear as a disclosure',
+      'a permission granted for a DIFFERENT purpose must never appear as a disclosure here',
     );
+    assert.ok(rows.every((r) => r.purpose === 'HEALTH_SCORE'));
     assert.ok(rows.every((r) => r.artifactType === 'FINANCIAL_HEALTH_SCORE'));
   });
 

@@ -418,6 +418,12 @@ export const UNDERWRITING_CONSENTS = [
 /** Conduct is a separate disclosure from existence — see loan.features.js. */
 export const REPAYMENT_CONSENTS = [
   { dataType: 'REPAYMENT_HISTORY', purpose: 'UNDERWRITING' },
+  // Also for the person's OWN score screen. Seeing your own repayment record is
+  // not a disclosure to anyone — it is the strongest positive signal the engine
+  // holds about you, and hiding it from you while showing it to a lender would
+  // be exactly backwards.
+  { dataType: 'LOAN_HISTORY', purpose: 'HEALTH_SCORE' },
+  { dataType: 'REPAYMENT_HISTORY', purpose: 'HEALTH_SCORE' },
 ];
 
 export const CONSENT_PLAN = {

@@ -205,6 +205,32 @@ export default function NambikaiHome() {
             />
           </Link>
           <div className="hairline" />
+          <Link to="/nambikai/borrow" className="block">
+            <ListRow
+              icon={
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-navy">
+                  <Icon name="bank" size={19} />
+                </span>
+              }
+              title="Borrow"
+              subtitle="What a partner would offer, and why that much"
+              onClick={() => {}}
+            />
+          </Link>
+          <div className="hairline" />
+          <Link to="/nambikai/income-proof" className="block">
+            <ListRow
+              icon={
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-navy">
+                  <Icon name="document" size={19} />
+                </span>
+              }
+              title="Proof of income"
+              subtitle="For a landlord, a visa, or anyone who asks"
+              onClick={() => {}}
+            />
+          </Link>
+          <div className="hairline" />
           <Link to="/nambikai/report/new" className="block">
             <ListRow
               icon={

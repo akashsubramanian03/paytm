@@ -21,10 +21,16 @@ import NambikaiHome from './pages/nambikai/NambikaiHome.jsx';
 import Consent from './pages/nambikai/Consent.jsx';
 import ConsentAudit from './pages/nambikai/ConsentAudit.jsx';
 import Assistant from './pages/nambikai/Assistant.jsx';
+import Borrow from './pages/nambikai/Borrow.jsx';
 import BusinessAssistant from './pages/nambikai/BusinessAssistant.jsx';
 import BusinessHome from './pages/nambikai/BusinessHome.jsx';
 import BusinessProfile from './pages/nambikai/BusinessProfile.jsx';
 import ClusterSettings from './pages/nambikai/ClusterSettings.jsx';
+import IncomeProof from './pages/nambikai/IncomeProof.jsx';
+import KycStep from './pages/nambikai/KycStep.jsx';
+import LoanDetail from './pages/nambikai/LoanDetail.jsx';
+import Loans from './pages/nambikai/Loans.jsx';
+import Portfolio from './pages/nambikai/Portfolio.jsx';
 import Groups from './pages/nambikai/Groups.jsx';
 import Report from './pages/nambikai/Report.jsx';
 import RequestReport from './pages/nambikai/RequestReport.jsx';
@@ -64,6 +70,12 @@ export default function App() {
           <Route path="nambikai/consent" element={<Consent />} />
           <Route path="nambikai/consent/audit" element={<ConsentAudit />} />
           <Route path="nambikai/assistant" element={<Assistant />} />
+          <Route path="nambikai/borrow" element={<Borrow />} />
+          <Route path="nambikai/borrow/kyc" element={<KycStep />} />
+          <Route path="nambikai/loans" element={<Loans />} />
+          <Route path="nambikai/loans/:id" element={<LoanDetail />} />
+          <Route path="nambikai/income-proof" element={<IncomeProof />} />
+          <Route path="nambikai/portfolio" element={<Portfolio />} />
           <Route path="nambikai/business" element={<BusinessHome />} />
           <Route path="nambikai/business/:id" element={<BusinessProfile />} />
           <Route path="nambikai/business/:id/assistant" element={<BusinessAssistant />} />

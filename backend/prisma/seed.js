@@ -624,6 +624,51 @@ const chunk = (list, size) => {
 
 /* ----------------------------------------------------------------- main -- */
 
+/**
+ * Compute and store the score a seeded borrower had when they applied.
+ *
+ * Deliberately computed rather than invented: it runs the same engine the app
+ * runs, so the band on the record is one the scorecard would genuinely have
+ * produced from that borrower's data.
+ */
+async function scoreForSeededApplication(userId, asOf) {
+  const { buildUserFeatureVector } = await import('../src/nambikai/features/featureVector.js');
+  const { tokenFor } = await import('../src/nambikai/consent/consent.guard.js');
+  const { scoreUser } = await import('../src/nambikai/engine/scorecard.js');
+  const { applyRules } = await import('../src/nambikai/engine/rules.js');
+  const { writeScore } = await import('../src/nambikai/pipeline/persist.js');
+
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  const consent = await prisma.consentRecord.findFirst({
+    where: { subjectId: userId, dataType: 'WALLET_LEDGER', purpose: 'UNDERWRITING' },
+  });
+  if (!consent) return null;
+
+  const months = Math.max(
+    1,
+    (asOf.getUTCFullYear() - user.createdAt.getUTCFullYear()) * 12 +
+      (asOf.getUTCMonth() - user.createdAt.getUTCMonth()),
+  );
+
+  const fv = await buildUserFeatureVector(userId, {
+    asOf,
+    token: tokenFor(['WALLET_LEDGER', 'GROUP_CONTRIBUTIONS', 'BILL_PAYMENTS', 'LOAN_HISTORY']),
+    tenureMonths: months,
+  });
+  const scoreResult = scoreUser(fv);
+  const ruleResult = applyRules(scoreResult, fv);
+
+  return writeScore({
+    subjectType: 'USER',
+    subjectId: userId,
+    scoreResult,
+    ruleResult,
+    inputsHash: fv.inputsHash,
+    consentRecordId: consent.id,
+    computedAt: asOf,
+  });
+}
+
 async function main() {
   console.log('\nSeeding Paytm + Nambikai demo database...\n');
 
@@ -963,6 +1008,12 @@ async function main() {
     const userId = userByKey.get(lp.personaKey).id;
     const partner = lp.plan.partnerId;
 
+    // The band the borrower was at when they applied, frozen onto the
+    // application. Their score moves afterwards — the record of what was decided
+    // on must not, or the portfolio would be marking the scorecard against
+    // numbers it never actually produced.
+    const scoreAtApplication = await scoreForSeededApplication(userId, lp.disbursedAt);
+
     // A loan cannot exist without the application and offer it came from — the
     // record has to show that somebody asked and somebody agreed.
     const application = await prisma.loanApplication.create({
@@ -973,6 +1024,7 @@ async function main() {
         requestedPaise: lp.priced.principalPaise,
         purpose: lp.plan.purpose,
         status: 'ACCEPTED',
+        scoreId: scoreAtApplication?.id ?? null,
         affordability: JSON.stringify({
           seeded: true,
           bindingConstraint: 'FOIR',

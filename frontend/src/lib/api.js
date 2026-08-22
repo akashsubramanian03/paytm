@@ -156,5 +156,22 @@ export const api = {
       request('GET', `/nambikai/businesses/${id}/assistant/suggestions`),
     businessAsk: (id, body) =>
       request('POST', `/nambikai/businesses/${id}/assistant/ask`, { body }),
+
+    lendingEligibility: (amount) =>
+      request('GET', withQuery('/nambikai/lending/eligibility', { amount })),
+    lendingOffers: (amount) => request('GET', withQuery('/nambikai/lending/offers', { amount })),
+    applyForLoan: (body) => request('POST', '/nambikai/lending/applications', { body }),
+    loanApplications: () => request('GET', '/nambikai/lending/applications'),
+    acceptOffer: (applicationId, body) =>
+      request('POST', `/nambikai/lending/applications/${applicationId}/accept`, { body }),
+    kycStatus: () => request('GET', '/nambikai/lending/kyc'),
+    submitKyc: (body) => request('POST', '/nambikai/lending/kyc', { body }),
+    loans: () => request('GET', '/nambikai/lending/loans'),
+    loan: (id) => request('GET', `/nambikai/lending/loans/${id}`),
+    payInstallment: (loanId, installmentId) =>
+      request('POST', `/nambikai/lending/loans/${loanId}/installments/${installmentId}/pay`),
+    loanForecast: (id) => request('GET', `/nambikai/lending/loans/${id}/forecast`),
+    incomeProof: () => request('GET', '/nambikai/lending/income-proof'),
+    portfolio: () => request('GET', '/nambikai/lending/portfolio'),
   },
 };

@@ -199,6 +199,53 @@ export const REASON_CODES = {
     guidance: 'Nambikai does not count this against you. The weight moves to what it can actually see.',
   },
 
+  /* ------------------------------------------------ repayment record ----- */
+  REPAYMENT_SPOTLESS: {
+    label: 'Every loan instalment paid on time',
+    category: CATEGORY.REPAYMENT_TRACK_RECORD,
+    polarity: POSITIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  REPAYMENT_MOSTLY_ON_TIME: {
+    label: 'Loan instalments are usually paid on time',
+    category: CATEGORY.REPAYMENT_TRACK_RECORD,
+    polarity: POSITIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  REPAYMENT_LATE_PATTERN: {
+    label: 'Loan instalments are often paid late',
+    category: CATEGORY.REPAYMENT_TRACK_RECORD,
+    polarity: NEGATIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+    guidance: 'Recent months weigh more than older ones. A run of on-time payments moves this faster than the misses hold it back.',
+  },
+  REPAYMENT_MISSED: {
+    label: 'Some loan instalments were missed',
+    category: CATEGORY.REPAYMENT_TRACK_RECORD,
+    polarity: NEGATIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+  },
+  LOAN_CLOSED_IN_FULL: {
+    label: 'A loan repaid in full',
+    category: CATEGORY.REPAYMENT_TRACK_RECORD,
+    polarity: POSITIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: true,
+    guidance: 'Completing a loan is the strongest single piece of evidence Nambikai can see, and it raises how much you can borrow next.',
+  },
+  FIRST_TIME_BORROWER: {
+    label: 'No loan history yet',
+    category: CATEGORY.REPAYMENT_TRACK_RECORD,
+    polarity: NEUTRAL,
+    attribution: INDIVIDUAL,
+    affectsScore: false,
+    guidance: 'Nambikai does not count this against you. Until there is a repayment record, that weight moves to what it can already see.',
+  },
+
   /* ----------------------------------------------------- credit history --- */
   NO_FORMAL_CREDIT: {
     label: 'No formal credit history',
@@ -351,6 +398,21 @@ export const REASON_CODES = {
       'This is the owner’s OWN record. It is never another member’s behaviour, and never a group-level signal.',
   },
 
+  GATE_ACTIVE_DELINQUENCY: {
+    label: 'A loan instalment is overdue',
+    category: null,
+    polarity: NEGATIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: false,
+  },
+  GATE_OVER_OBLIGATED: {
+    label: 'Existing commitments already take most of your income',
+    category: null,
+    polarity: NEGATIVE,
+    attribution: INDIVIDUAL,
+    affectsScore: false,
+    guidance: 'This is about capacity, not conduct. Nambikai will not help you borrow more when what you already owe each month is close to what you earn.',
+  },
   GATE_SME_INSUFFICIENT_DATA: {
     label: 'Not enough business records to assess yet',
     category: null,

@@ -55,6 +55,45 @@ const GATES = [
     }),
   },
   {
+    /**
+     * An overdue instalment is a fact, not an inference, and it should not be
+     * averaged away by an otherwise strong profile. Thirty days is the point at
+     * which a late payment stops being a scheduling slip; ninety is the point at
+     * which it stops being recoverable on its own.
+     */
+    code: 'GATE_ACTIVE_DELINQUENCY',
+    floor: RISK_BAND.MEDIUM,
+    test: (fv) => (fv.loans?.maxDaysPastDue ?? 0) > 30,
+    evidence: (fv) => ({
+      maxDaysPastDue: fv.loans?.maxDaysPastDue ?? 0,
+      overdueInstallments: fv.loans?.overdueCount ?? 0,
+    }),
+  },
+  {
+    /**
+     * Capacity, not conduct. Someone whose existing commitments already consume
+     * most of their income should not be helped to add more, however reliably
+     * they have paid so far — that reliability is precisely what would be
+     * destroyed by one more obligation.
+     */
+    code: 'GATE_OVER_OBLIGATED',
+    floor: RISK_BAND.MEDIUM,
+    test: (fv) => {
+      const n = Math.max(fv.ledger.activeMonths, 1);
+      const inflows = fv.ledger.monthlyInflowPaise.slice(-n).filter((v) => v > 0);
+      if (!inflows.length) return false;
+      const sorted = [...inflows].sort((a, b) => a - b);
+      const median = sorted[Math.floor(sorted.length / 2)];
+      const obligations = (fv.group.committedPerCyclePaise ?? 0) + (fv.loans?.activeEmiPaise ?? 0);
+      // Over 60% of median income already committed.
+      return median > 0 && obligations * 10 > median * 6;
+    },
+    evidence: (fv) => ({
+      groupCommitmentPaise: fv.group.committedPerCyclePaise ?? 0,
+      activeEmiPaise: fv.loans?.activeEmiPaise ?? 0,
+    }),
+  },
+  {
     code: 'GATE_NEGATIVE_TREND',
     floor: RISK_BAND.MEDIUM,
     // Both halves must hold. Spending more than you earn while sitting on a

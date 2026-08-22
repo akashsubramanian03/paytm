@@ -33,8 +33,18 @@ export const REQUIRED_CONSENTS = {
     DATA_TYPE.WALLET_LEDGER,
     DATA_TYPE.GROUP_CONTRIBUTIONS,
     DATA_TYPE.BILL_PAYMENTS,
+    // Capacity cannot be assessed without knowing what is already owed. Note
+    // that REPAYMENT_HISTORY is NOT required — someone may disclose that a loan
+    // exists without disclosing how they serviced it, and the repayment
+    // category then reports unmeasured rather than guessing.
+    DATA_TYPE.LOAN_HISTORY,
   ],
   [PURPOSE.ASSISTANT]: [DATA_TYPE.WALLET_LEDGER],
+  [PURPOSE.LOAN_SERVICING]: [
+    DATA_TYPE.WALLET_LEDGER,
+    DATA_TYPE.LOAN_HISTORY,
+    DATA_TYPE.REPAYMENT_HISTORY,
+  ],
   [PURPOSE.SME_UNDERWRITING]: [
     DATA_TYPE.WALLET_LEDGER,
     DATA_TYPE.BUSINESS_GST,
@@ -86,13 +96,14 @@ export async function requireConsent({
 }) {
   const required = requiredFor(purpose);
 
-  const records = await activeConsentsFor({
-    subjectType,
-    subjectId,
-    purpose,
-    dataTypes: required,
-    asOf,
-  });
+  // EVERY active consent for this purpose, not only the required ones.
+  //
+  // The required list decides whether the call proceeds at all. But a data type
+  // that is optional but granted is still a permission the person gave, and a
+  // token that silently dropped it would make the grant meaningless — the
+  // extractor would see no permission and treat the data as undisclosed. The
+  // gate is about what MUST be present; the token is about what MAY be read.
+  const records = await activeConsentsFor({ subjectType, subjectId, purpose, asOf });
 
   // One record per data type: if several are somehow active, the newest wins.
   const byType = new Map();
@@ -115,11 +126,14 @@ export async function requireConsent({
     );
   }
 
+  // Required types first so primaryConsentId is stable, then anything else the
+  // person granted for this purpose.
+  const optional = [...byType.keys()].filter((t) => !required.includes(t));
   return buildToken({
     subjectType,
     subjectId,
     purpose,
-    records: required.map((t) => byType.get(t)),
+    records: [...required, ...optional].map((t) => byType.get(t)),
     requestId,
     actor,
     actorId,

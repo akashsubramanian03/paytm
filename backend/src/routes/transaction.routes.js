@@ -14,7 +14,9 @@ const listSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   cursor: z.string().trim().min(6).max(64).optional(),
   direction: z.enum(['DEBIT', 'CREDIT']).optional(),
-  category: z.enum(['TRANSFER', 'ADD_MONEY', 'RECHARGE', 'BILL_PAYMENT']).optional(),
+  category: z
+    .enum(['TRANSFER', 'ADD_MONEY', 'RECHARGE', 'BILL_PAYMENT', 'LOAN_DISBURSEMENT', 'LOAN_REPAYMENT'])
+    .optional(),
   q: z.string().trim().max(60).optional(),
 });
 

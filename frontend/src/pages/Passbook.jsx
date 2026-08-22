@@ -17,6 +17,7 @@ const FILTERS = [
   { id: 'ADD_MONEY', label: 'Top-ups', category: 'ADD_MONEY' },
   { id: 'RECHARGE', label: 'Recharges', category: 'RECHARGE' },
   { id: 'BILL_PAYMENT', label: 'Bills', category: 'BILL_PAYMENT' },
+  { id: 'LOAN_REPAYMENT', label: 'Loan', category: 'LOAN_REPAYMENT' },
 ];
 
 export default function Passbook() {

@@ -41,6 +41,24 @@ const isSignupBonus = (entry) => (entry.metadata ?? '').includes('SIGNUP_BONUS')
  */
 const isGroupFlow = (entry) => (entry.metadata ?? '').includes('GROUP_CONTRIBUTION');
 
+/**
+ * Money moving into or out of a loan.
+ *
+ * Separated for the same reason circle money is, and it is the same mistake in a
+ * different coat. An EMI is not consumption — it is deleveraging, and it raises
+ * net worth rather than reducing it. Counted as ordinary spending it depresses
+ * savings consistency and the emergency buffer, so a borrower who repays
+ * diligently every month scores WORSE for the diligence. That is precisely
+ * backwards, and it would hit hardest the people who most need the loop to
+ * reward them.
+ *
+ * A disbursement, likewise, is borrowed money and not income — it is already
+ * excluded from the income categories, and named here so the intent is explicit
+ * rather than incidental.
+ */
+const isLoanFlow = (entry) =>
+  entry.category === 'LOAN_REPAYMENT' || entry.category === 'LOAN_DISBURSEMENT';
+
 export async function extractLedgerFeatures(
   userId,
   { asOf = new Date(), months = DEFAULT_WINDOW_MONTHS, token } = {},
@@ -71,6 +89,8 @@ export async function extractLedgerFeatures(
   const monthlyOutflowPaise = [];
   const monthlyGroupInPaise = [];
   const monthlyGroupOutPaise = [];
+  const monthlyLoanInPaise = [];
+  const monthlyLoanOutPaise = [];
   const monthEndBalancePaise = [];
   const monthsWithIncome = [];
   const monthsWithBill = [];
@@ -81,17 +101,24 @@ export async function extractLedgerFeatures(
     let outflow = 0;
     let groupIn = 0;
     let groupOut = 0;
+    let loanIn = 0;
+    let loanOut = 0;
     let sawBill = false;
     let sawRecharge = false;
 
     for (const entry of bucket.rows) {
       const group = isGroupFlow(entry);
+      const loan = isLoanFlow(entry);
       if (entry.direction === 'CREDIT') {
-        // A payout from a circle is savings coming back, not money earned.
-        if (group) groupIn += entry.amountPaise;
+        // A payout from a circle is savings coming back, not money earned; a
+        // disbursement is borrowed, not earned.
+        if (loan) loanIn += entry.amountPaise;
+        else if (group) groupIn += entry.amountPaise;
         else if (INCOME_CATEGORIES.has(entry.category) && !isSignupBonus(entry)) {
           inflow += entry.amountPaise;
         }
+      } else if (loan) {
+        loanOut += entry.amountPaise;
       } else if (group) {
         groupOut += entry.amountPaise;
       } else {
@@ -105,6 +132,8 @@ export async function extractLedgerFeatures(
     monthlyOutflowPaise.push(outflow);
     monthlyGroupInPaise.push(groupIn);
     monthlyGroupOutPaise.push(groupOut);
+    monthlyLoanInPaise.push(loanIn);
+    monthlyLoanOutPaise.push(loanOut);
     monthsWithIncome.push(inflow > 0 ? 1 : 0);
     monthsWithBill.push(sawBill ? 1 : 0);
     monthsWithRecharge.push(sawRecharge ? 1 : 0);
@@ -133,10 +162,10 @@ export async function extractLedgerFeatures(
   // once and is never "repaid" to them individually, so counting it here would
   // manufacture a dozen phantom unpaid loans for the most reliable savers.
   const credits = entries.filter(
-    (e) => e.direction === 'CREDIT' && e.counterpartyId && !isGroupFlow(e),
+    (e) => e.direction === 'CREDIT' && e.counterpartyId && !isGroupFlow(e) && !isLoanFlow(e),
   );
   const debits = entries.filter(
-    (e) => e.direction === 'DEBIT' && e.counterpartyId && !isGroupFlow(e),
+    (e) => e.direction === 'DEBIT' && e.counterpartyId && !isGroupFlow(e) && !isLoanFlow(e),
   );
   let borrowLikeEvents = 0;
   let repaidEvents = 0;
@@ -181,6 +210,8 @@ export async function extractLedgerFeatures(
     monthlyOutflowPaise,
     monthlyGroupInPaise,
     monthlyGroupOutPaise,
+    monthlyLoanInPaise,
+    monthlyLoanOutPaise,
     monthEndBalancePaise,
     monthsWithIncome,
     monthsWithBill,

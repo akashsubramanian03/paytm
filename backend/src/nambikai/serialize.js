@@ -270,4 +270,103 @@ export function businessRecord(r) {
   };
 }
 
+/* ------------------------------------------------------------- lending -- */
+
+export function loanApplication(a) {
+  return {
+    id: a.id,
+    partnerId: a.partnerId,
+    productKey: a.productKey,
+    requested: money(a.requestedPaise),
+    purpose: a.purpose,
+    status: a.status,
+    scoreId: a.scoreId,
+    affordability: parseJson(a.affordability, {}),
+    declineReasons: parseJson(a.declineReasonCodes, null),
+    createdAt: a.createdAt,
+  };
+}
+
+export function loanOffer(o) {
+  return {
+    id: o.id,
+    applicationId: o.applicationId,
+    sanctioned: money(o.sanctionedPaise),
+    emi: money(o.emiPaise),
+    totalRepayable: money(o.totalRepayablePaise),
+    totalInterest: money(o.totalInterestPaise),
+    tenureMonths: o.tenureMonths,
+    // Both rates, always — see the note in lending.routes.js.
+    ratePct: o.rateBps / 100,
+    flatRatePct: o.flatRateBps / 100,
+    suggestedDueDay: o.suggestedDueDay,
+    dueDayRationale: parseJson(o.dueDayRationale, {}),
+    status: o.status,
+    expiresAt: o.expiresAt,
+  };
+}
+
+export function loan(l) {
+  return {
+    id: l.id,
+    partnerId: l.partnerId,
+    principal: money(l.principalPaise),
+    outstanding: money(l.outstandingPaise),
+    emi: money(l.emiPaise),
+    ratePct: l.rateBps / 100,
+    tenureMonths: l.tenureMonths,
+    dueDayOfMonth: l.dueDayOfMonth,
+    disbursedAt: l.disbursedAt,
+    status: l.status,
+    closedAt: l.closedAt,
+    ...(l.installments
+      ? {
+          paidCount: l.installments.filter((i) => i.status === 'PAID').length,
+          totalCount: l.installments.length,
+        }
+      : {}),
+  };
+}
+
+const INSTALLMENT_LABEL = {
+  PENDING: 'Due',
+  PAID: 'Paid',
+  LATE: 'Paid late',
+  MISSED: 'Overdue',
+  WAIVED: 'Waived',
+};
+
+export function loanInstallment(i) {
+  return {
+    id: i.id,
+    installmentIndex: i.installmentIndex,
+    dueAt: i.dueAt,
+    paidAt: i.paidAt,
+    amountDue: money(i.amountDuePaise),
+    principal: money(i.principalPaise),
+    interest: money(i.interestPaise),
+    amountPaid: money(i.amountPaidPaise),
+    status: i.status,
+    statusLabel: INSTALLMENT_LABEL[i.status] ?? i.status,
+    daysLate: i.daysLate,
+    // An overdue instalment stays payable — a missed EMI is still owed, and
+    // catching up late should be possible and should count.
+    isPayable: ['PENDING', 'LATE', 'MISSED'].includes(i.status),
+    ledgerEntryId: i.ledgerEntryId,
+  };
+}
+
+export function kycRecord(k) {
+  return {
+    id: k.id,
+    idType: k.idType,
+    maskedId: k.maskedId,
+    status: k.status,
+    method: k.method,
+    failureReason: k.failureReason,
+    verifiedAt: k.verifiedAt,
+    createdAt: k.createdAt,
+  };
+}
+
 export { money, parseJson };

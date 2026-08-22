@@ -412,6 +412,12 @@ export const UNDERWRITING_CONSENTS = [
   { dataType: 'WALLET_LEDGER', purpose: 'UNDERWRITING' },
   { dataType: 'GROUP_CONTRIBUTIONS', purpose: 'UNDERWRITING' },
   { dataType: 'BILL_PAYMENTS', purpose: 'UNDERWRITING' },
+  { dataType: 'LOAN_HISTORY', purpose: 'UNDERWRITING' },
+];
+
+/** Conduct is a separate disclosure from existence — see loan.features.js. */
+export const REPAYMENT_CONSENTS = [
+  { dataType: 'REPAYMENT_HISTORY', purpose: 'UNDERWRITING' },
 ];
 
 export const CONSENT_PLAN = {
@@ -429,4 +435,73 @@ export const CONSENT_PLAN = {
   lakshmi: { everyday: true, underwriting: true },
   // Granted nothing at all. This is the consent wall.
   arjun: { everyday: false, underwriting: false },
+};
+
+/**
+ * Seeded loan history.
+ *
+ * Every persona here exists to make one property of the lending layer visible on
+ * first load, rather than requiring someone to take a loan and wait a year.
+ *
+ * `behaviour` is per instalment index, drawn from the seeded RNG:
+ *   onTime — paid on the due date
+ *   late   — paid within `lateDays` of it
+ *   missed — never paid
+ */
+export const LOAN_PLAN = {
+  // The hero, mid-loan and flawless. Shows REPAYMENT_TRACK_RECORD lifting a
+  // thin-file score, and the graduated cap starting to lift.
+  karthik: {
+    partnerId: 'partner_demo_mfi',
+    productKey: 'mfi_chit_advance',
+    purpose: 'WORKING_CAPITAL',
+    principalRs: 20000,
+    rateBps: 2800,
+    tenureMonths: 12,
+    disbursedMonthsAgo: 7,
+    dueDay: 14, // chosen from his daily-receipts pattern, not a convention
+    behaviour: { onTime: 1 },
+  },
+
+  // The decline, deepened. Two missed instalments and a live delinquency, which
+  // fires the gate and holds the band regardless of everything else.
+  rahul: {
+    partnerId: 'partner_demo_nbfc',
+    productKey: 'nbfc_emergency',
+    purpose: 'EMERGENCY',
+    principalRs: 15000,
+    rateBps: 3000,
+    tenureMonths: 6,
+    disbursedMonthsAgo: 5,
+    dueDay: 5,
+    behaviour: {
+      // Fine while the income held, then not.
+      byIndex: { 1: 'onTime', 2: 'onTime', 3: 'late', 4: 'missed', 5: 'missed' },
+      lateDays: 9,
+    },
+  },
+
+  // A loan seen all the way through. Shows the completion bonus and the
+  // graduated ceiling lifting for a second, larger loan.
+  meena: {
+    partnerId: 'partner_demo_bank',
+    productKey: 'bank_business_term',
+    purpose: 'WORKING_CAPITAL',
+    principalRs: 60000,
+    rateBps: 1800,
+    tenureMonths: 12,
+    disbursedMonthsAgo: 15,
+    dueDay: 20,
+    behaviour: { onTime: 0.92, late: 0.08, lateDays: 3 },
+  },
+};
+
+/** Who has verified identity. Arjun and Sreeram have not — one to show the
+ *  gate before disbursement, one because he has never applied. */
+export const KYC_PLAN = {
+  karthik: { idType: 'PAN', value: 'AXTPB1234K' },
+  rahul: { idType: 'PAN', value: 'BJKPM4521R' },
+  meena: { idType: 'AADHAAR', value: '234123412346' },
+  ananya: { idType: 'PAN', value: 'CQWPI7788A' },
+  lakshmi: { idType: 'PAN', value: 'DLMPD9911L' },
 };

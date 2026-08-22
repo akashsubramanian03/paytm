@@ -37,6 +37,11 @@ model User {
   clusterAppeals ClusterSignalAppeal[] @relation("ClusterAppeals")
   businesses     Business[]            @relation("Businesses")
 
+  // Lending back-relations. Non-owning sides, so no column is added to User.
+  loanApplications LoanApplication[] @relation("LoanApplications")
+  loans            Loan[]            @relation("Loans")
+  kycRecords       KycRecord[]       @relation("KycRecords")
+
   @@index([firstName])
   @@index([lastName])
 }
@@ -89,6 +94,9 @@ model LedgerEntry {
   /// Non-owning side: Contribution holds the foreign key, so this adds no column.
   /// A group contribution is an ordinary TRANSFER row that a Contribution points at.
   contribution Contribution?
+
+  /// Likewise for an EMI: LoanInstallment holds the key, so no column here.
+  loanInstallment LoanInstallment? @relation("InstallmentPayment")
 
   @@index([userId, createdAt])
   @@index([referenceId])
@@ -390,8 +398,9 @@ model ConsentRecord {
   expiresAt   DateTime?
   revokedAt   DateTime?
 
-  scores  FinancialHealthScore[]
-  reports UnderwritingReport[]
+  scores           FinancialHealthScore[]
+  reports          UnderwritingReport[]
+  loanApplications LoanApplication[]
 
   @@index([subjectType, subjectId, dataType, purpose, revokedAt])
   @@index([userId])
@@ -465,4 +474,185 @@ model BusinessRecord {
 
   @@index([businessId, kind, periodStart])
   @@index([businessId, status])
+}
+
+// ===========================================================================
+// LENDING — the loop that turns a score into credit, and repayment back into
+// a score.
+// ===========================================================================
+// A SIMULATED PARTNER NBFC LENDS. Nambikai still only scores: it never decides
+// whether to lend, never sets the rate, and never holds the risk. What it adds
+// here is the thing a risk band alone cannot answer — HOW MUCH someone can
+// actually afford — and the loop that lets repayment become evidence.
+//
+// Loan products are NOT modelled here. They live in the frozen registry in
+// src/nambikai/partners.js alongside the partners that offer them, for the same
+// reason: a product is scaffolding, not user data.
+
+/// A request for credit. The status column is the state machine.
+model LoanApplication {
+  id             String @id @default(cuid())
+  userId         String
+  user           User   @relation("LoanApplications", fields: [userId], references: [id], onDelete: Cascade)
+  partnerId      String // from the frozen registry
+  productKey     String
+  requestedPaise Int
+  purpose        String // WORKING_CAPITAL | EMERGENCY | FAMILY | EQUIPMENT | OTHER
+  status         String @default("SUBMITTED") // SUBMITTED | OFFERED | ACCEPTED | DECLINED | EXPIRED | WITHDRAWN
+
+  /// The score and report this decision rested on, so an application can always
+  /// be traced back to the evidence that produced it.
+  scoreId  String?
+  reportId String?
+
+  /// A frozen snapshot of the affordability calculation at decision time. The
+  /// applicant's income changes; what they were assessed on must not.
+  affordability      String // JSON
+  declineReasonCodes String? // JSON — populated only when status = DECLINED
+
+  consentRecordId String
+  consentRecord   ConsentRecord @relation(fields: [consentRecordId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  offers LoanOffer[]
+  loan   Loan?
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+/// A concrete, priced offer. Every field a borrower needs to compare is here —
+/// including the flat rate, because Indian microlenders quote flat and the
+/// difference is not small.
+model LoanOffer {
+  id            String          @id @default(cuid())
+  applicationId String
+  application   LoanApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  sanctionedPaise     Int
+  rateBps             Int // the true reducing-balance rate
+  flatRateBps         Int // what the same cost looks like quoted flat
+  tenureMonths        Int
+  emiPaise            Int
+  totalRepayablePaise Int
+  totalInterestPaise  Int
+
+  /// Chosen from the borrower's own inflow pattern, not from a calendar
+  /// convention. See engine/cashflow.js — this is the single highest-leverage
+  /// thing available to prevent a missed payment.
+  suggestedDueDay Int
+  dueDayRationale String // JSON
+
+  status    String   @default("OPEN") // OPEN | ACCEPTED | EXPIRED | SUPERSEDED
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  loan Loan?
+
+  @@index([applicationId, status])
+}
+
+model Loan {
+  id            String          @id @default(cuid())
+  userId        String
+  user          User            @relation("Loans", fields: [userId], references: [id], onDelete: Cascade)
+  applicationId String          @unique
+  application   LoanApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  offerId       String          @unique
+  offer         LoanOffer       @relation(fields: [offerId], references: [id])
+  partnerId     String
+
+  principalPaise Int
+  rateBps        Int
+  tenureMonths   Int
+  emiPaise       Int
+  dueDayOfMonth  Int
+
+  disbursedAt               DateTime
+  /// The wallet credit that actually paid out. Written by lib/wallet.js.
+  disbursementLedgerEntryId String?  @unique
+
+  status           String    @default("ACTIVE") // ACTIVE | CLOSED | WRITTEN_OFF
+  outstandingPaise Int
+  closedAt         DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  installments LoanInstallment[]
+
+  @@index([userId, status])
+  @@index([partnerId, status])
+}
+
+/// One EMI. Deliberately shaped like Contribution: a PAID row points at the
+/// DEBIT LedgerEntry that actually moved the money, and PENDING/MISSED rows
+/// point at nothing and move nothing. That model is proven and the wallet
+/// invariants already cover its shape.
+model LoanInstallment {
+  id               String    @id @default(cuid())
+  loanId           String
+  loan             Loan      @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  installmentIndex Int // 1-based
+  dueAt            DateTime
+  paidAt           DateTime?
+
+  amountDuePaise  Int
+  principalPaise  Int
+  interestPaise   Int
+  amountPaidPaise Int @default(0)
+
+  status   String @default("PENDING") // PENDING | PAID | LATE | MISSED | WAIVED
+  daysLate Int    @default(0)
+
+  ledgerEntryId String?      @unique
+  ledgerEntry   LedgerEntry? @relation("InstallmentPayment", fields: [ledgerEntryId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([loanId, installmentIndex])
+  @@index([loanId, dueAt])
+  @@index([status, dueAt])
+}
+
+/// Mock identity verification.
+///
+/// This checks the FORMAT of a PAN or Aadhaar number and nothing else. It does
+/// not contact any registry and proves nothing about who someone is. `method`
+/// records that plainly so no reader of this table can mistake it for real KYC.
+model KycRecord {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation("KycRecords", fields: [userId], references: [id], onDelete: Cascade)
+  idType        String // PAN | AADHAAR
+  /// Only ever the masked form. The full number is never stored.
+  maskedId      String
+  status        String    @default("PENDING") // PENDING | VERIFIED | FAILED
+  method        String    @default("SIMULATED_FORMAT_CHECK")
+  failureReason String?
+  verifiedAt    DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId, status])
+}
+
+/// A pattern in the ledger that looks like an attempt to manufacture a score
+/// rather than earn one. Surfaced as a risk signal; never silently punitive.
+model AnomalyFlag {
+  id            String   @id @default(cuid())
+  subjectType   String // USER | BUSINESS
+  subjectId     String // polymorphic, no FK — must be in the seed wipe list
+  kind          String // CIRCULAR_TRANSFER | VELOCITY_SPIKE | INCONSISTENT_WITH_BUSINESS
+  severityBps   Int
+  evidence      String // JSON
+  windowStart   DateTime
+  windowEnd     DateTime
+  engineVersion String
+  computedAt    DateTime @default(now())
+
+  @@unique([subjectType, subjectId, kind, windowStart])
+  @@index([subjectType, subjectId, computedAt])
 }

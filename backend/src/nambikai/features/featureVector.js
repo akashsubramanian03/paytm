@@ -17,6 +17,7 @@ import { hashInputs } from '../util/hash.js';
 import { utcDayKey } from '../util/window.js';
 import { extractLedgerFeatures } from './ledger.features.js';
 import { extractGroupFeatures } from './group.features.js';
+import { extractLoanFeatures, NO_LOAN_FEATURES } from './loan.features.js';
 
 export async function buildUserFeatureVector(
   userId,
@@ -27,6 +28,12 @@ export async function buildUserFeatureVector(
     extractGroupFeatures(userId, { asOf, months, token }),
   ]);
 
+  // Loan history is its own permission. Without it the repayment category is
+  // simply unmeasured — the score is built from less, never from a guess.
+  const loans = token.grantedDataTypes.has('LOAN_HISTORY')
+    ? await extractLoanFeatures(userId, { asOf, months, token })
+    : NO_LOAN_FEATURES;
+
   const vector = {
     schemaVersion: 'nbk-fv-1',
     engineVersion: ENGINE_VERSION,
@@ -36,6 +43,7 @@ export async function buildUserFeatureVector(
     accountTenureMonths: tenureMonths,
     ledger,
     group,
+    loans,
   };
 
   // The determinism proof. A test asserts this is byte-identical whether or not

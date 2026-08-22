@@ -61,6 +61,8 @@ const CATEGORY_LABEL = {
   ADD_MONEY: 'Added to Wallet',
   RECHARGE: 'Mobile Recharge',
   BILL_PAYMENT: 'Bill Payment',
+  LOAN_DISBURSEMENT: 'Loan Disbursed',
+  LOAN_REPAYMENT: 'Loan Instalment',
 };
 
 export function ledgerEntry(entry) {

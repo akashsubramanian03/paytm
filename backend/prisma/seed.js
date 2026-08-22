@@ -36,6 +36,8 @@ import bcrypt from 'bcryptjs';
 import { buildReferenceId, pickAvatarColor } from '../src/lib/ids.js';
 import { formatINR } from '../src/lib/money.js';
 import { RECHARGE_PLANS, BILLERS } from './seed-catalogue.js';
+import { buildSchedule, priceLoan } from '../src/nambikai/engine/affordability.js';
+import { checkFormat, maskId } from '../src/nambikai/pipeline/kyc.pipeline.js';
 import {
   PERSONAS,
   GROUPS,
@@ -43,7 +45,10 @@ import {
   EVERYDAY_CONSENTS,
   UNDERWRITING_CONSENTS,
   SME_CONSENTS,
+  REPAYMENT_CONSENTS,
   CONSENT_PLAN,
+  LOAN_PLAN,
+  KYC_PLAN,
 } from './seed-personas.js';
 
 const prisma = new PrismaClient();
@@ -53,6 +58,13 @@ const RUPEE = 100;
 
 /** One "now" for the whole run, so nothing drifts mid-seed. */
 const NOW = new Date();
+
+/** Partner display names, mirrored from src/nambikai/partners.js. */
+const PARTNER_NAME = {
+  partner_demo_nbfc: 'Demo NBFC',
+  partner_demo_bank: 'Demo Small Finance Bank',
+  partner_demo_mfi: 'Demo Microfinance',
+};
 
 /** Grace period before an unpaid contribution counts as missed. Mirrors
  *  GRACE_DAYS in src/nambikai/groups.service.js. */
@@ -138,6 +150,8 @@ function behaviourFor(rules, monthsAgoValue) {
  * a missed cycle moves no money but is the single most important signal the
  * behaviour engine has).
  */
+const loanPlans = [];
+
 function buildEvents() {
   const events = [];
   const contributions = [];
@@ -308,6 +322,80 @@ function buildEvents() {
     }
   }
 
+  /* ---- loans ---- */
+  // Disbursement and every instalment flow through the SAME balance simulator as
+  // everything else, so solveOpeningBalances still makes the negative-balance
+  // guard unreachable and the whole-database invariants hold by construction.
+  for (const [personaKey, plan] of Object.entries(LOAN_PLAN)) {
+    const principalPaise = plan.principalRs * RUPEE;
+    const priced = priceLoan(principalPaise, plan.rateBps, plan.tenureMonths);
+    const disbursedAt = monthsAgo(plan.disbursedMonthsAgo, plan.dueDay, 11, 0);
+    const disbursementRef = buildReferenceId();
+
+    events.push({
+      at: disbursedAt,
+      type: 'loan_disburse',
+      user: personaKey,
+      rs: plan.principalRs,
+      referenceId: disbursementRef,
+      loanKey: personaKey,
+      partnerId: plan.partnerId,
+    });
+
+    const installments = [];
+    for (const row of buildSchedule(principalPaise, plan.rateBps, plan.tenureMonths)) {
+      const dueAt = utc(
+        disbursedAt.getUTCFullYear(),
+        disbursedAt.getUTCMonth() + row.installmentIndex,
+        Math.min(plan.dueDay, 28),
+        10,
+        0,
+      );
+
+      // Not due yet — a real PENDING row, and the thing the demo can pay.
+      if (dueAt > NOW) {
+        installments.push({ ...row, dueAt, status: 'PENDING', daysLate: 0 });
+        continue;
+      }
+
+      let outcome = plan.behaviour.byIndex?.[row.installmentIndex];
+      if (!outcome) {
+        const roll = rand();
+        const onTime = roll < (plan.behaviour.onTime ?? 0);
+        const late = !onTime && roll < (plan.behaviour.onTime ?? 0) + (plan.behaviour.late ?? 0);
+        outcome = onTime ? 'onTime' : late ? 'late' : 'missed';
+      }
+
+      if (outcome === 'missed') {
+        installments.push({ ...row, dueAt, status: 'MISSED', daysLate: 0 });
+        continue;
+      }
+
+      const daysLate = outcome === 'late' ? (plan.behaviour.lateDays ?? randInt(2, 8)) : 0;
+      const paidAt = daysAfter(dueAt, daysLate, randInt(9, 18), randInt(0, 59));
+      if (paidAt > NOW) {
+        installments.push({ ...row, dueAt, status: 'PENDING', daysLate: 0 });
+        continue;
+      }
+
+      const ref = buildReferenceId();
+      installments.push({ ...row, dueAt, status: 'PAID', daysLate, paidAt, referenceId: ref });
+      events.push({
+        at: paidAt,
+        type: 'loan_emi',
+        user: personaKey,
+        amountPaise: row.amountDuePaise,
+        rs: Math.round(row.amountDuePaise / RUPEE),
+        referenceId: ref,
+        loanKey: personaKey,
+        partnerId: plan.partnerId,
+        installmentIndex: row.installmentIndex,
+      });
+    }
+
+    loanPlans.push({ personaKey, plan, priced, disbursedAt, disbursementRef, installments });
+  }
+
   // The current month is not over yet. Monthly events are placed on a random
   // day of the month, so without this the passbook would show transactions
   // dated into the future — and any "running balance equals the last row's
@@ -315,7 +403,7 @@ function buildEvents() {
   // afterwards, because a future-dated row sorts after it.
   const dated = events.filter((e) => e.at <= NOW);
   dated.sort((a, b) => a.at - b.at);
-  return { events: dated, contributions };
+  return { events: dated, contributions, loanPlans };
 }
 
 /* ----------------------------------------------------------- simulation -- */
@@ -378,7 +466,7 @@ function simulate(events, openings, { userByKey, probe }) {
   };
 
   for (const event of events) {
-    const paise = event.rs * RUPEE;
+    const paise = event.amountPaise ?? event.rs * RUPEE;
 
     if (event.type === 'transfer' || event.type === 'contribution') {
       const isContribution = event.type === 'contribution';
@@ -410,6 +498,42 @@ function simulate(events, openings, { userByKey, probe }) {
         amountPaise: paise, balanceAfterPaise: toBalance,
         counterpartyId: from.id, counterpartyName: fullName(from), counterpartyHandle: from.upiId,
         note: event.note, metadata, createdAt: event.at,
+      });
+      continue;
+    }
+
+    if (event.type === 'loan_disburse') {
+      const after = credit(event.user, paise);
+      if (probe) continue;
+      rows.push({
+        referenceId: event.referenceId, userId: userByKey.get(event.user).id,
+        direction: 'CREDIT', category: 'LOAN_DISBURSEMENT', status: 'SUCCESS',
+        amountPaise: paise, balanceAfterPaise: after,
+        counterpartyName: PARTNER_NAME[event.partnerId] ?? 'Lending partner',
+        counterpartyHandle: 'simulated-partner',
+        note: 'Loan disbursed',
+        metadata: JSON.stringify({ simulated: true, kind: 'LOAN_DISBURSEMENT', loanKey: event.loanKey }),
+        createdAt: event.at,
+      });
+      continue;
+    }
+
+    if (event.type === 'loan_emi') {
+      const exact = event.amountPaise ?? paise;
+      const after = debit(event.user, exact, event.at);
+      if (probe) continue;
+      rows.push({
+        referenceId: event.referenceId, userId: userByKey.get(event.user).id,
+        direction: 'DEBIT', category: 'LOAN_REPAYMENT', status: 'SUCCESS',
+        amountPaise: exact, balanceAfterPaise: after,
+        counterpartyName: PARTNER_NAME[event.partnerId] ?? 'Lending partner',
+        counterpartyHandle: 'simulated-partner',
+        note: `Instalment ${event.installmentIndex}`,
+        metadata: JSON.stringify({
+          simulated: true, kind: 'LOAN_REPAYMENT',
+          loanKey: event.loanKey, installmentIndex: event.installmentIndex,
+        }),
+        createdAt: event.at,
       });
       continue;
     }
@@ -508,6 +632,16 @@ async function main() {
   // deleting users does NOT cascade to them — they must be listed explicitly or
   // stale signals from a previous run leak into the next demo.
   await prisma.consentAuditLog.deleteMany();
+  // Lending first: LoanApplication holds a foreign key to ConsentRecord, so the
+  // consents cannot go before the applications that cite them. AnomalyFlag is
+  // polymorphic with no FK at all, so like the other polymorphic tables it must
+  // be named explicitly or a re-seed silently accumulates stale rows.
+  await prisma.loanInstallment.deleteMany();
+  await prisma.loan.deleteMany();
+  await prisma.loanOffer.deleteMany();
+  await prisma.loanApplication.deleteMany();
+  await prisma.kycRecord.deleteMany();
+  await prisma.anomalyFlag.deleteMany();
   await prisma.underwritingReport.deleteMany();
   await prisma.financialHealthScore.deleteMany();
   await prisma.clusterSignalAppeal.deleteMany();
@@ -596,7 +730,7 @@ async function main() {
   console.log(`  savings groups     ${GROUPS.length}`);
 
   // ---- history ------------------------------------------------------------
-  const { events, contributions } = buildEvents();
+  const { events, contributions, loanPlans: plans } = buildEvents();
   const openings = solveOpeningBalances(events);
   const { rows, balances } = simulate(events, openings, { userByKey, probe: false });
 
@@ -743,6 +877,8 @@ async function main() {
     const wanted = [
       ...(plan.everyday ? EVERYDAY_CONSENTS : []),
       ...(plan.underwriting ? UNDERWRITING_CONSENTS : []),
+      // Conduct is disclosed only by those who actually have a loan to disclose.
+      ...(LOAN_PLAN[p.key] ? REPAYMENT_CONSENTS : []),
     ];
     for (const { dataType, purpose } of wanted) {
       consentRows.push({
@@ -794,7 +930,144 @@ async function main() {
     });
   }
   await prisma.consentAuditLog.createMany({ data: auditRows });
+
+  // A loan application records the permission it was made under, so it can
+  // always be traced back to a decision somebody actually made.
+  const consentByKey = new Map(
+    (await prisma.consentRecord.findMany()).map((c) => [`${c.subjectId}:${c.dataType}:${c.purpose}`, c.id]),
+  );
+  const consentIdFor = (userId, dataType, purpose) =>
+    consentByKey.get(`${userId}:${dataType}:${purpose}`) ?? null;
   console.log(`  consent records    ${consentRows.length}`);
+
+  // ---- loans --------------------------------------------------------------
+  // The ledger rows already exist; these records point at them. SQLite's
+  // createMany returns a count rather than ids, so paid instalments are linked
+  // back to their debit legs by the referenceId they were written with — the
+  // same technique the contributions use.
+  const loanLegs = await prisma.ledgerEntry.findMany({
+    where: {
+      referenceId: {
+        in: plans.flatMap((lp) => [
+          lp.disbursementRef,
+          ...lp.installments.filter((i) => i.referenceId).map((i) => i.referenceId),
+        ]),
+      },
+    },
+    select: { id: true, referenceId: true, direction: true, amountPaise: true },
+  });
+  const loanLegByRef = new Map(loanLegs.map((l) => [l.referenceId, l]));
+
+  let installmentCount = 0;
+  for (const lp of plans) {
+    const userId = userByKey.get(lp.personaKey).id;
+    const partner = lp.plan.partnerId;
+
+    // A loan cannot exist without the application and offer it came from — the
+    // record has to show that somebody asked and somebody agreed.
+    const application = await prisma.loanApplication.create({
+      data: {
+        userId,
+        partnerId: partner,
+        productKey: lp.plan.productKey,
+        requestedPaise: lp.priced.principalPaise,
+        purpose: lp.plan.purpose,
+        status: 'ACCEPTED',
+        affordability: JSON.stringify({
+          seeded: true,
+          bindingConstraint: 'FOIR',
+          note: 'Seeded history — the affordability engine assessed this at the time of application.',
+        }),
+        consentRecordId: consentIdFor(userId, 'WALLET_LEDGER', 'UNDERWRITING'),
+        createdAt: lp.disbursedAt,
+      },
+    });
+
+    const offer = await prisma.loanOffer.create({
+      data: {
+        applicationId: application.id,
+        sanctionedPaise: lp.priced.principalPaise,
+        rateBps: lp.plan.rateBps,
+        flatRateBps: lp.priced.flatRateBps,
+        tenureMonths: lp.plan.tenureMonths,
+        emiPaise: lp.priced.emiPaise,
+        totalRepayablePaise: lp.priced.totalRepayablePaise,
+        totalInterestPaise: lp.priced.totalInterestPaise,
+        suggestedDueDay: lp.plan.dueDay,
+        dueDayRationale: JSON.stringify({ seeded: true, chosenFrom: 'historical inflow pattern' }),
+        status: 'ACCEPTED',
+        expiresAt: daysAfter(lp.disbursedAt, 14, 10, 0),
+        createdAt: lp.disbursedAt,
+      },
+    });
+
+    const paidPrincipal = lp.installments
+      .filter((i) => i.status === 'PAID')
+      .reduce((sum, i) => sum + i.principalPaise, 0);
+    const allSettled = lp.installments.every((i) => i.status === 'PAID');
+
+    const loan = await prisma.loan.create({
+      data: {
+        userId,
+        applicationId: application.id,
+        offerId: offer.id,
+        partnerId: partner,
+        principalPaise: lp.priced.principalPaise,
+        rateBps: lp.plan.rateBps,
+        tenureMonths: lp.plan.tenureMonths,
+        emiPaise: lp.priced.emiPaise,
+        dueDayOfMonth: lp.plan.dueDay,
+        disbursedAt: lp.disbursedAt,
+        disbursementLedgerEntryId: loanLegByRef.get(lp.disbursementRef)?.id ?? null,
+        status: allSettled ? 'CLOSED' : 'ACTIVE',
+        outstandingPaise: Math.max(lp.priced.principalPaise - paidPrincipal, 0),
+        closedAt: allSettled ? lp.installments[lp.installments.length - 1].paidAt : null,
+        createdAt: lp.disbursedAt,
+      },
+    });
+
+    await prisma.loanInstallment.createMany({
+      data: lp.installments.map((i) => {
+        const leg = i.referenceId ? loanLegByRef.get(i.referenceId) : null;
+        return {
+          loanId: loan.id,
+          installmentIndex: i.installmentIndex,
+          dueAt: i.dueAt,
+          paidAt: i.status === 'PAID' ? i.paidAt : null,
+          amountDuePaise: i.amountDuePaise,
+          principalPaise: i.principalPaise,
+          interestPaise: i.interestPaise,
+          // A paid instalment must agree with the ledger row it annotates.
+          amountPaidPaise: leg ? leg.amountPaise : 0,
+          status: i.status,
+          daysLate: i.daysLate,
+          ledgerEntryId: leg ? leg.id : null,
+        };
+      }),
+    });
+    installmentCount += lp.installments.length;
+  }
+  console.log(`  loans              ${plans.length}`);
+  console.log(`  instalments        ${installmentCount}`);
+
+  // ---- kyc ----------------------------------------------------------------
+  // Simulated format checks only. Arjun and Sreeram deliberately have none:
+  // one to show the gate before disbursement, one because he never applied.
+  const kycRows = [];
+  for (const [personaKey, rec] of Object.entries(KYC_PLAN)) {
+    const check = checkFormat(rec.idType, rec.value);
+    kycRows.push({
+      userId: userByKey.get(personaKey).id,
+      idType: rec.idType,
+      maskedId: check.ok ? maskId(rec.idType, check.value) : 'XXXXXXXX',
+      status: check.ok ? 'VERIFIED' : 'FAILED',
+      method: 'SIMULATED_FORMAT_CHECK',
+      verifiedAt: check.ok ? grantedAt : null,
+      createdAt: grantedAt,
+    });
+  }
+  await prisma.kycRecord.createMany({ data: kycRows });
+  console.log(`  kyc records        ${kycRows.length}`);
 
   // ---- final balances -----------------------------------------------------
   for (const p of PERSONAS) {

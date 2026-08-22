@@ -19,7 +19,7 @@ import prisma from './db.js';
 import { ApiError } from './errors.js';
 import { formatINR } from './money.js';
 import { buildReferenceId } from './ids.js';
-import { PAYABLE_CONTRIB_STATUSES } from '../nambikai/constants.js';
+import { PAYABLE_CONTRIB_STATUSES, PAYABLE_INSTALLMENT_STATUSES } from '../nambikai/constants.js';
 import config from '../config.js';
 
 const TX_OPTIONS = { maxWait: 10_000, timeout: 20_000 };
@@ -324,5 +324,130 @@ export async function payGroupContribution({
     const contribution = await tx.contribution.findUnique({ where: { id: contributionId } });
 
     return { referenceId, entry: debitEntry, contribution, balancePaise: payerBalance, payee };
+  }, TX_OPTIONS);
+}
+
+/**
+ * Disburse a loan into the wallet.
+ *
+ * A SIMULATED PARTNER LENDS. Nambikai scores; it does not extend credit, set
+ * the rate or hold the risk. This function exists here rather than in the
+ * Nambikai layer for one reason: this file is the only place in the codebase
+ * permitted to write a ledger row, and a loan that reached the wallet by any
+ * other route would be money the passbook could not account for.
+ *
+ * Single-leg CREDIT, like addMoney. That keeps the "every TRANSFER has exactly
+ * one debit and one credit" invariant untouched — there is no counterparty
+ * wallet here, because the partner is not a Paytm user.
+ */
+export async function disburseLoan({ userId, amountPaise, loanId, partnerName, note = null }) {
+  assertWithinLimits(amountPaise);
+
+  return prisma.$transaction(async (tx) => {
+    const balancePaise = await applyCredit(tx, userId, amountPaise);
+    const entry = await tx.ledgerEntry.create({
+      data: {
+        referenceId: buildReferenceId(),
+        userId,
+        direction: 'CREDIT',
+        category: 'LOAN_DISBURSEMENT',
+        status: 'SUCCESS',
+        amountPaise,
+        balanceAfterPaise: balancePaise,
+        counterpartyName: partnerName,
+        counterpartyHandle: 'simulated-partner',
+        note: note ?? 'Loan disbursed',
+        metadata: JSON.stringify({ simulated: true, kind: 'LOAN_DISBURSEMENT', loanId }),
+      },
+    });
+    return { entry, balancePaise };
+  }, TX_OPTIONS);
+}
+
+/**
+ * Pay one loan instalment.
+ *
+ * The money movement and the instalment update commit together, so the two can
+ * never disagree. Reentrancy is guarded exactly as payGroupContribution guards
+ * it: a conditional updateMany that matches zero rows if the instalment has
+ * already been paid, which rolls back the whole transaction including the debit.
+ * Two simultaneous taps therefore cannot pay twice — the second gets a 409 and
+ * no money moves.
+ *
+ * Single-leg DEBIT: the repayment leaves the Paytm economy for the partner, who
+ * has no wallet here.
+ */
+export async function repayLoanInstallment({
+  userId,
+  installmentId,
+  amountPaise,
+  daysLate = 0,
+  partnerName,
+  note = null,
+  metadata = null,
+}) {
+  assertWithinLimits(amountPaise);
+
+  return prisma.$transaction(async (tx) => {
+    const balancePaise = await applyDebit(tx, userId, amountPaise);
+
+    const entry = await tx.ledgerEntry.create({
+      data: {
+        referenceId: buildReferenceId(),
+        userId,
+        direction: 'DEBIT',
+        category: 'LOAN_REPAYMENT',
+        status: 'SUCCESS',
+        amountPaise,
+        balanceAfterPaise: balancePaise,
+        counterpartyName: partnerName,
+        counterpartyHandle: 'simulated-partner',
+        note: note ?? 'Loan instalment',
+        metadata: JSON.stringify({
+          simulated: true,
+          kind: 'LOAN_REPAYMENT',
+          installmentId,
+          ...(metadata ?? {}),
+        }),
+      },
+    });
+
+    const paidAt = new Date();
+    const marked = await tx.loanInstallment.updateMany({
+      where: { id: installmentId, status: { in: PAYABLE_INSTALLMENT_STATUSES } },
+      data: {
+        status: 'PAID',
+        paidAt,
+        amountPaidPaise: amountPaise,
+        daysLate,
+        ledgerEntryId: entry.id,
+      },
+    });
+
+    if (marked.count !== 1) {
+      throw ApiError.conflict('INSTALLMENT_ALREADY_PAID', 'This instalment has already been paid.');
+    }
+
+    const installment = await tx.loanInstallment.findUnique({
+      where: { id: installmentId },
+      include: { loan: true },
+    });
+
+    // Reduce the outstanding by the PRINCIPAL portion only. Interest is the cost
+    // of the loan, not a reduction of it.
+    const remaining = Math.max(installment.loan.outstandingPaise - installment.principalPaise, 0);
+    const stillOwing = await tx.loanInstallment.count({
+      where: { loanId: installment.loanId, status: { in: PAYABLE_INSTALLMENT_STATUSES } },
+    });
+
+    const loan = await tx.loan.update({
+      where: { id: installment.loanId },
+      data: {
+        outstandingPaise: remaining,
+        ...(stillOwing === 0 ? { status: 'CLOSED', closedAt: paidAt, outstandingPaise: 0 } : {}),
+      },
+    });
+
+    return { entry, installment, loan, balancePaise };
   }, TX_OPTIONS);
 }

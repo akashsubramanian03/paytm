@@ -59,6 +59,8 @@ export const DATA_TYPE = {
   CLUSTER_TRUST_SIGNAL: 'CLUSTER_TRUST_SIGNAL',
   BUSINESS_GST: 'BUSINESS_GST',
   BUSINESS_INVOICES: 'BUSINESS_INVOICES',
+  LOAN_HISTORY: 'LOAN_HISTORY',
+  REPAYMENT_HISTORY: 'REPAYMENT_HISTORY',
 };
 
 /** Plain-language labels for the consent screen. The user must be able to read
@@ -71,6 +73,8 @@ export const DATA_TYPE_LABEL = {
   CLUSTER_TRUST_SIGNAL: 'Your savings group’s overall reliability',
   BUSINESS_GST: 'Your business GST filings',
   BUSINESS_INVOICES: 'Your business invoices and receivables',
+  LOAN_HISTORY: 'Loans you have taken through Paytm',
+  REPAYMENT_HISTORY: 'How you repaid them',
 };
 
 export const PURPOSE = {
@@ -78,6 +82,7 @@ export const PURPOSE = {
   UNDERWRITING: 'UNDERWRITING',
   ASSISTANT: 'ASSISTANT',
   SME_UNDERWRITING: 'SME_UNDERWRITING',
+  LOAN_SERVICING: 'LOAN_SERVICING',
 };
 
 export const PURPOSE_LABEL = {
@@ -85,6 +90,7 @@ export const PURPOSE_LABEL = {
   UNDERWRITING: 'Share an assessment with a lending partner you choose',
   ASSISTANT: 'Answer your questions about your own money',
   SME_UNDERWRITING: 'Share a business assessment with a lending partner you choose',
+  LOAN_SERVICING: 'Run a loan you have taken — schedule, reminders and repayment',
 };
 
 export const RISK_BAND = { LOW: 'LOW', MEDIUM: 'MEDIUM', HIGH: 'HIGH' };
@@ -190,6 +196,7 @@ export const CATEGORY = {
   SAVINGS_CONSISTENCY: 'SAVINGS_CONSISTENCY',
   PAYMENT_BEHAVIOUR: 'PAYMENT_BEHAVIOUR',
   COMMITMENTS: 'COMMITMENTS',
+  REPAYMENT_TRACK_RECORD: 'REPAYMENT_TRACK_RECORD',
   CREDIT_HISTORY: 'CREDIT_HISTORY',
   EMERGENCY_BUFFER: 'EMERGENCY_BUFFER',
 };
@@ -201,18 +208,30 @@ export const CATEGORY_KEYS = [
   CATEGORY.SAVINGS_CONSISTENCY,
   CATEGORY.PAYMENT_BEHAVIOUR,
   CATEGORY.COMMITMENTS,
+  CATEGORY.REPAYMENT_TRACK_RECORD,
   CATEGORY.CREDIT_HISTORY,
   CATEGORY.EMERGENCY_BUFFER,
 ];
 
 /** Basis points. Must sum to exactly 10000 — asserted by a test. */
+/**
+ * Basis points. Must sum to exactly 10000 — asserted by a test.
+ *
+ * REPAYMENT_TRACK_RECORD carries real weight because actual repaid credit is
+ * far stronger evidence than anything the engine can infer. It is also, for
+ * almost everyone here, UNMEASURED — nobody starts with a loan. An unmeasured
+ * category gives its weight back pro rata (see redistributeWeights), so adding
+ * it barely moves the score of someone who has never borrowed, and only starts
+ * to matter once there is a repayment record to matter about.
+ */
 export const CATEGORY_WEIGHTS_BPS = {
-  INCOME_STABILITY: 2000,
-  SAVINGS_CONSISTENCY: 2000,
-  PAYMENT_BEHAVIOUR: 2000,
-  COMMITMENTS: 1800,
-  CREDIT_HISTORY: 1200,
-  EMERGENCY_BUFFER: 1000,
+  INCOME_STABILITY: 1700,
+  SAVINGS_CONSISTENCY: 1700,
+  PAYMENT_BEHAVIOUR: 1700,
+  COMMITMENTS: 1600,
+  REPAYMENT_TRACK_RECORD: 1500,
+  CREDIT_HISTORY: 1000,
+  EMERGENCY_BUFFER: 800,
 };
 
 export const CATEGORY_LABEL = {
@@ -220,6 +239,7 @@ export const CATEGORY_LABEL = {
   SAVINGS_CONSISTENCY: 'Savings consistency',
   PAYMENT_BEHAVIOUR: 'Payment behaviour',
   COMMITMENTS: 'Commitments kept',
+  REPAYMENT_TRACK_RECORD: 'Loan repayment record',
   CREDIT_HISTORY: 'Credit history',
   EMERGENCY_BUFFER: 'Emergency buffer',
 };
@@ -234,6 +254,8 @@ export const CATEGORY_DESCRIPTION = {
   SAVINGS_CONSISTENCY: 'Whether you hold on to some of what you earn, month after month.',
   PAYMENT_BEHAVIOUR: 'How regularly you pay bills and recharges, and how often payments fail.',
   COMMITMENTS: 'Your record of paying savings-group contributions on time.',
+  REPAYMENT_TRACK_RECORD:
+    'How you have repaid credit taken through Paytm. Recent months count for more than older ones, in both directions.',
   CREDIT_HISTORY:
     'Nambikai has no credit-bureau access. This measures how long you have been on Paytm and whether you repay money lent to you by people you know.',
   EMERGENCY_BUFFER: 'How many days of your usual spending your balance could cover.',
@@ -309,3 +331,89 @@ export const CLUSTER_MIN_ACTIVE_MEMBERS = 3;
 /** Rolling window the engine scores over. */
 export const DEFAULT_WINDOW_MONTHS = 12;
 export const DEFAULT_WINDOW_DAYS = 365;
+
+/* ---------------------------------------------------------------- lending -- */
+
+export const LOAN_PURPOSE = {
+  WORKING_CAPITAL: 'WORKING_CAPITAL',
+  EMERGENCY: 'EMERGENCY',
+  FAMILY: 'FAMILY',
+  EQUIPMENT: 'EQUIPMENT',
+  OTHER: 'OTHER',
+};
+
+export const APPLICATION_STATUS = {
+  SUBMITTED: 'SUBMITTED',
+  OFFERED: 'OFFERED',
+  ACCEPTED: 'ACCEPTED',
+  DECLINED: 'DECLINED',
+  EXPIRED: 'EXPIRED',
+  WITHDRAWN: 'WITHDRAWN',
+};
+
+export const OFFER_STATUS = {
+  OPEN: 'OPEN',
+  ACCEPTED: 'ACCEPTED',
+  EXPIRED: 'EXPIRED',
+  SUPERSEDED: 'SUPERSEDED',
+};
+
+export const LOAN_STATUS = { ACTIVE: 'ACTIVE', CLOSED: 'CLOSED', WRITTEN_OFF: 'WRITTEN_OFF' };
+
+export const INSTALLMENT_STATUS = {
+  PENDING: 'PENDING',
+  PAID: 'PAID',
+  LATE: 'LATE',
+  MISSED: 'MISSED',
+  WAIVED: 'WAIVED',
+};
+
+/** Statuses an installment can be paid FROM. Used by the conditional update
+ *  that makes double-paying impossible. */
+export const PAYABLE_INSTALLMENT_STATUSES = [
+  INSTALLMENT_STATUS.PENDING,
+  INSTALLMENT_STATUS.LATE,
+  INSTALLMENT_STATUS.MISSED,
+];
+
+export const KYC_STATUS = { PENDING: 'PENDING', VERIFIED: 'VERIFIED', FAILED: 'FAILED' };
+export const KYC_ID_TYPE = { PAN: 'PAN', AADHAAR: 'AADHAAR' };
+
+export const ANOMALY_KIND = {
+  CIRCULAR_TRANSFER: 'CIRCULAR_TRANSFER',
+  VELOCITY_SPIKE: 'VELOCITY_SPIKE',
+  INCONSISTENT_WITH_BUSINESS: 'INCONSISTENT_WITH_BUSINESS',
+};
+
+/**
+ * Income-banded FOIR: the share of monthly income that may go to servicing debt.
+ *
+ * THE BANDS FALL WITH INCOME, DELIBERATELY. A flat ratio — the industry default
+ * — quietly over-lends to the poorest, because 30% of ₹12,000 leaves ₹8,400 to
+ * live on while 30% of ₹1,20,000 leaves ₹84,000. The people this product exists
+ * for are exactly the ones a flat ratio hurts, so capacity is capped harder the
+ * less there is to spare.
+ *
+ * Ordered low to high; the first band whose ceiling the income falls under wins.
+ */
+export const FOIR_BANDS = [
+  { maxIncomePaise: 1_500_000, foirBps: 2000, label: 'under ₹15,000' },
+  { maxIncomePaise: 3_000_000, foirBps: 3000, label: '₹15,000–₹30,000' },
+  { maxIncomePaise: 6_000_000, foirBps: 4000, label: '₹30,000–₹60,000' },
+  { maxIncomePaise: Infinity, foirBps: 5000, label: 'over ₹60,000' },
+];
+
+/** A first loan is capped regardless of affordability. The ceiling lifts as
+ *  loans are closed on time — the safe way to lend to a thin file. */
+export const FIRST_LOAN_CEILING_PAISE = 1_500_000; // ₹15,000
+export const GRADUATION_MULTIPLIER_BPS = 15_000; // each closed loan raises the cap 1.5x
+
+/** What bound the offer. Named so the UI can explain a number, not assert it. */
+export const BINDING_CONSTRAINT = {
+  FOIR: 'FOIR',
+  RISK_BAND: 'RISK_BAND',
+  GRADUATED_CAP: 'GRADUATED_CAP',
+  PRODUCT_MAX: 'PRODUCT_MAX',
+  REQUESTED: 'REQUESTED',
+  INELIGIBLE: 'INELIGIBLE',
+};

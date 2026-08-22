@@ -996,9 +996,18 @@ describe('underwriting reports', () => {
 
     const user = await prisma.user.findUnique({ where: { id: karthik.userId } });
     const asOf = new Date();
+    // The same permissions the underwriting pipeline itself uses. Recomputing
+    // from a narrower set would compare two different feature vectors and prove
+    // nothing about whether the prose layer moved the band.
     const fv = await buildUserFeatureVector(karthik.userId, {
       asOf,
-      token: tokenFor(['WALLET_LEDGER', 'GROUP_CONTRIBUTIONS']),
+      token: tokenFor([
+        'WALLET_LEDGER',
+        'GROUP_CONTRIBUTIONS',
+        'BILL_PAYMENTS',
+        'LOAN_HISTORY',
+        'REPAYMENT_HISTORY',
+      ]),
       tenureMonths: monthsBetween(user.createdAt, asOf),
     });
     const independent = applyRules(scoreUser(fv), fv);

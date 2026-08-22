@@ -281,6 +281,90 @@ function commitments(fv, codes) {
   return { rawBps, sampleCount: group.dueCount, evidence };
 }
 
+/**
+ * The repayment record.
+ *
+ * Actual repaid credit is the strongest evidence this engine can see — far
+ * stronger than the peer-repayment inference in CREDIT_HISTORY, which has to
+ * guess whether a transfer was a loan at all. So it carries real weight.
+ *
+ * It is also, for nearly everyone here, UNMEASURED. Nobody starts with a loan,
+ * and a thin-file borrower must not be penalised for the absence of the very
+ * thing they are trying to obtain. With no settled instalment the category
+ * reports sampleCount 0, its weight redistributes to what IS visible, and the
+ * person is told that is what happened.
+ *
+ * Recency is weighted deliberately: the last six instalments count double. A
+ * borrower recovering from a bad patch should be able to see the recovery, and a
+ * flat lifetime average hides exactly that.
+ */
+function repaymentTrackRecord(fv, codes) {
+  const loans = fv.loans ?? { settledCount: 0 };
+  const evidence = {
+    settledInstallments: loans.settledCount ?? 0,
+    onTime: loans.onTimeCount ?? 0,
+    late: loans.lateCount ?? 0,
+    missed: loans.missedCount ?? 0,
+    loansClosed: loans.closedLoanCount ?? 0,
+    activeLoans: loans.activeLoanCount ?? 0,
+    maxDaysPastDue: loans.maxDaysPastDue ?? 0,
+  };
+
+  if (!loans.settledCount) {
+    codes.push(emit('FIRST_TIME_BORROWER', evidence));
+    return { rawBps: 0, sampleCount: 0, evidence };
+  }
+
+  const onTimeBps = ratioBps(loans.onTimeCount, loans.settledCount);
+  const recentOnTimeBps = loans.recentSettledCount
+    ? ratioBps(loans.recentOnTimeCount, loans.recentSettledCount)
+    : null;
+  const missBps = ratioBps(loans.missedCount, loans.settledCount);
+  const latenessPenBps = clamp((loans.avgDaysLate ?? 0) * 250, 0, 5000);
+
+  /**
+   * Completion is a BONUS ON TOP, not a component of the average.
+   *
+   * Treating it as a third weighted component capped a flawless in-progress
+   * borrower at 70% — which meant taking a loan and paying every instalment on
+   * time LOWERED their score, because the category came in below the ones it was
+   * diluting. A product that punishes the exact behaviour it is trying to
+   * encourage is worse than one that ignores it.
+   *
+   * So a perfect record scores full marks whether or not the loan has run its
+   * course, and finishing one lifts a partial record rather than being the only
+   * route to a good one.
+   */
+  const completionBonusBps = clampBps((loans.closedLoanCount ?? 0) * 750);
+
+  const base = blend([
+    [onTimeBps, 50],
+    [recentOnTimeBps, 50], // recency: the last six count double
+  ]);
+  const penalty = weightedBps([
+    [latenessPenBps, 30],
+    [missBps, 70],
+  ]);
+  const rawBps = clampBps(base + completionBonusBps - penalty);
+
+  if (loans.missedCount === 0 && loans.lateCount === 0) {
+    codes.push(emit('REPAYMENT_SPOTLESS', evidence));
+  } else if (onTimeBps >= 8000) {
+    codes.push(emit('REPAYMENT_MOSTLY_ON_TIME', { ...evidence, onTimeBps }));
+  }
+  if (loans.lateCount > 0 && (loans.avgDaysLate ?? 0) >= 3) {
+    codes.push(emit('REPAYMENT_LATE_PATTERN', { late: loans.lateCount, avgDaysLate: loans.avgDaysLate }));
+  }
+  if (loans.missedCount > 0) {
+    codes.push(emit('REPAYMENT_MISSED', { missed: loans.missedCount, settledInstallments: loans.settledCount }));
+  }
+  if ((loans.closedLoanCount ?? 0) > 0) {
+    codes.push(emit('LOAN_CLOSED_IN_FULL', { loansClosed: loans.closedLoanCount }));
+  }
+
+  return { rawBps, sampleCount: loans.settledCount, evidence };
+}
+
 function creditHistory(fv, codes) {
   const { ledger } = fv;
   const tenureMonths = fv.accountTenureMonths;
@@ -335,7 +419,12 @@ function emergencyBuffer(fv, codes) {
   const outflows = recent(ledger.monthlyOutflowPaise, n);
   const monthEnds = recent(ledger.monthEndBalancePaise, n);
 
-  const avgMonthlyOutflow = Math.round(sumInt(outflows) / n);
+  // Savings treats an EMI as deleveraging rather than spending, but a buffer
+  // has to cover it all the same: an obligation you must meet next month is
+  // exactly what a buffer is for. So loan outflow is added back HERE and only
+  // here.
+  const loanOutflows = recent(ledger.monthlyLoanOutPaise ?? new Array(n).fill(0), n);
+  const avgMonthlyOutflow = Math.round((sumInt(outflows) + sumInt(loanOutflows)) / n);
   const bufferDays = Math.round(
     (ledger.currentBalancePaise * 30) / Math.max(avgMonthlyOutflow, 1),
   );
@@ -369,6 +458,7 @@ const CATEGORY_FN = {
   [CATEGORY.SAVINGS_CONSISTENCY]: savingsConsistency,
   [CATEGORY.PAYMENT_BEHAVIOUR]: paymentBehaviour,
   [CATEGORY.COMMITMENTS]: commitments,
+  [CATEGORY.REPAYMENT_TRACK_RECORD]: repaymentTrackRecord,
   [CATEGORY.CREDIT_HISTORY]: creditHistory,
   [CATEGORY.EMERGENCY_BUFFER]: emergencyBuffer,
 };

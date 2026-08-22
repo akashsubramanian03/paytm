@@ -12,7 +12,7 @@
     "prisma:reset": "prisma migrate reset --force",
     "prisma:studio": "prisma studio",
     "seed": "node prisma/seed.js",
-    "test": "NODE_ENV=test DATABASE_URL=\"file:./test.db\" node --test --test-concurrency=1 \"tests/**/*.test.js\""
+    "test": "NODE_ENV=test DATABASE_URL=\"file:./test.db\" OPENAI_API_KEY= NAMBIKAI_AI_BASE_URL= node --test --test-concurrency=1 \"tests/**/*.test.js\""
   },
   "dependencies": {
     "@prisma/client": "^6.3.1",

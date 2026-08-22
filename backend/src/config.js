@@ -45,12 +45,16 @@ const EnvSchema = z.object({
   // Optional. Set it to reach an OpenAI-compatible endpoint instead — Azure
   // OpenAI, a gateway, or a local mock. The AI tests use it to exercise the real
   // request and response shape without a real key or a network call.
+  // The empty-then-validate order matters: `NAMBIKAI_AI_BASE_URL=` with nothing
+  // after it is how a shell unsets a variable for one command, and how the test
+  // script pins itself to the keyless path. Validating the URL first would make
+  // that empty string a fatal config error and stop the server booting.
   NAMBIKAI_AI_BASE_URL: z
     .string()
     .trim()
-    .url()
     .optional()
-    .transform((v) => (v ? v : undefined)),
+    .transform((v) => (v ? v : undefined))
+    .pipe(z.string().url().optional()),
   NAMBIKAI_AI_MAX_TOKENS: z.coerce.number().int().min(256).max(8000).default(500),
   NAMBIKAI_AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(20000),
 

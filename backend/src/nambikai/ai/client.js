@@ -113,9 +113,21 @@ export async function callModel({ system, payload, maxTokens, cacheKey, userId }
 
     cacheSet(cacheKey, text);
     return text;
-  } catch {
+  } catch (err) {
     // Timeouts, rate limits, network failures, API errors — all the same to the
-    // caller. The user gets a deterministic explanation instead of an error.
+    // CALLER: it gets null and shows a deterministic explanation instead of an
+    // error. That part is deliberate and stays.
+    //
+    // What is not deliberate is being unable to tell WHY. A silently swallowed
+    // failure is indistinguishable from having no key, and diagnosing one live
+    // meant adding temporary probes to find out that a transient 500 — not a
+    // guard, not the budget — was the cause. So the operator gets a line; the
+    // user still gets prose. Nothing secret is logged: the SDK reports status
+    // and code, never the key.
+    console.warn(
+      `[nambikai/ai] model call failed, falling back to template — ` +
+        `status=${err?.status ?? 'n/a'} code=${err?.code ?? err?.error?.code ?? err?.name ?? 'unknown'}`,
+    );
     return null;
   }
 }

@@ -44,9 +44,31 @@ Rules:
 - Write exactly two sentences of plain, neutral prose. No markdown, no bullet points.
 - Describe the shape of the income: how regular it is, and how many people it comes from.`;
 
-/** Any number offered as a score, band or limit is one the model was never given. */
-function assertsANumber(text) {
-  return /\b(?:score|grade|band|limit|rate|emi|interest)\b[^.]{0,40}?\b\d/i.test(text);
+/**
+ * Every digit in the answer must be one the model was handed.
+ *
+ * The first version of this looked for numbers NEAR words like "band" or
+ * "limit", and it was wrong in the expensive direction: it discarded
+ *
+ *   "...about as much as is safe for your income band of ₹15,000–₹30,000"
+ *
+ * which is a correct sentence quoting a band the context supplied. Proximity to
+ * a keyword says nothing about whether a figure was invented.
+ *
+ * So the check is now exact. Pull every number out of the context, pull every
+ * number out of the answer, and discard only if the answer contains one the
+ * context did not. Commas are stripped so "₹15,000" in the context matches
+ * "15,000" in the prose. Quoting the facts is encouraged; inventing one is what
+ * gets the paragraph thrown away.
+ */
+function numbersIn(value) {
+  const found = String(typeof value === 'string' ? value : JSON.stringify(value)).match(/\d[\d,]*/g) ?? [];
+  return new Set(found.map((n) => n.replace(/,/g, '')));
+}
+
+export function assertsUngivenNumber(text, context) {
+  const allowed = numbersIn(context);
+  return [...numbersIn(text)].some((n) => !allowed.has(n));
 }
 
 /**
@@ -67,7 +89,7 @@ export async function explainDecline({ context, fallback, cacheKey, userId }) {
 
   if (!text) return { text: fallback, source: EXPLAINER_SOURCE.TEMPLATE };
 
-  if (assertsANumber(text)) {
+  if (assertsUngivenNumber(text, context)) {
     return { text: fallback, source: EXPLAINER_SOURCE.TEMPLATE, discardedModelOutput: true };
   }
 
@@ -124,8 +146,10 @@ export async function summariseIncomeProof({ context, cacheKey, userId }) {
 
   if (!text) return { text: template, source: EXPLAINER_SOURCE.TEMPLATE };
 
-  // A summary that reaches for credit language has left its lane entirely.
-  if (/\b(?:credit|creditworth|loan|score|risk|eligib)/i.test(text)) {
+  // A summary that reaches for credit language has left its lane entirely, and
+  // one that states a figure it was not given is worse — this document is shown
+  // to a landlord who has no way to check it.
+  if (/\b(?:credit|creditworth|loan|score|risk|eligib)/i.test(text) || assertsUngivenNumber(text, context)) {
     return { text: template, source: EXPLAINER_SOURCE.TEMPLATE, discardedModelOutput: true };
   }
 

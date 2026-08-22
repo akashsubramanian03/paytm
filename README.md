@@ -43,9 +43,9 @@ That's the whole list. SQLite needs no installation — Prisma creates and manag
 
 ## Quick start
 
-From the project root:
-
 ```bash
+git clone https://github.com/akashsubramanian03/paytm.git
+cd paytm
 npm run setup   # install, create .env files, generate the client, migrate, seed
 npm run dev     # start the API (:4000) and the web app (:5173)
 ```

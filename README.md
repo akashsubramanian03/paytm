@@ -489,6 +489,42 @@ rather than a confident verdict built on two categories.
 
 Run `npm test` for all of it.
 
+### The rails this is shaped for
+
+India already has a regulated mechanism for what Nambikai does, and the design
+was built to its shape rather than retrofitted to it.
+
+**Account Aggregator (RBI, DEPA).** An AA sits between Financial Information
+Providers and Financial Information Users. It is *data-blind* — it manages
+**consent artefacts** and brokers flows it cannot read. A consent artefact names
+a purpose, the data types it covers, a validity window, a retention life and a
+revocation state, and every access is logged.
+
+That is what `consent/consent.guard.js` and `consent/audit.js` already store,
+because a permission that cannot be scoped, expired, revoked and audited is not
+a permission. `GET /nambikai/consents/artefacts` serialises every consent into
+the DEPA shape — a serialiser over existing columns, not a second model added to
+look compliant. `nambikai.depa.test.js` asserts every field is populated from
+the record, and that every FI type and purpose code is a real ReBIT one rather
+than an invented value.
+
+**OCEN.** The Open Credit Enablement Network separates the Loan Service Provider,
+which assembles a borrower's case, from the Lender, which is regulated and carries
+the risk. That split is not a label applied afterwards: it is why the engine
+produces a risk band rather than an approval, and why `PARTNER_DISCLAIMER` appears
+on every lending screen. Each underwriting report carries an `ocen` block naming
+the roles.
+
+**The honest limits.** Nambikai is not an Account Aggregator and not a registered
+FIU — both require RBI onboarding a demo does not have. Nothing here talks to a
+real AA, no artefact is signed, and every one is marked `simulated: true` with the
+reason spelled out. A fake signature would be worse than no signature.
+
+**What production would change.** The seeded ledger is replaced by an AA data
+fetch under the consent artefact above. Nothing downstream moves, because feature
+extraction already sits behind a consent token and already re-asserts against it
+before querying. The token is the seam.
+
 ## Scope
 
 This is a learning/demo project. It deliberately does **not** integrate any real payment

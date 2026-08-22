@@ -123,6 +123,7 @@ export const api = {
     grantConsent: (body) => request('POST', '/nambikai/consents', { body }),
     revokeConsent: (id) => request('DELETE', `/nambikai/consents/${id}`),
     consentAudit: (params) => request('GET', withQuery('/nambikai/consents/audit', params)),
+    consentArtefacts: () => request('GET', '/nambikai/consents/artefacts'),
 
     scoreInputs: () => request('GET', '/nambikai/score/inputs'),
     score: () => request('GET', '/nambikai/score'),

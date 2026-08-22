@@ -21,6 +21,7 @@ import * as consentService from '../../nambikai/consent/consent.service.js';
 import * as audit from '../../nambikai/consent/audit.js';
 import * as s from '../../nambikai/serialize.js';
 import { auditQuerySchema, grantConsentSchema, idParamSchema } from '../../nambikai/validators.js';
+import { consentArtefact } from '../../nambikai/depa.js';
 
 const router = Router();
 router.use(requireAuth);
@@ -97,6 +98,38 @@ router.delete(
       // Existing scores and reports are not deleted — they are the record of
       // what was disclosed. They become unusable instead.
       affectedArtifacts: result.affectedArtifacts,
+    });
+  }),
+);
+
+/**
+ * Every active permission, in the shape India's Account Aggregator framework
+ * uses for a consent artefact.
+ *
+ * This is the claim made concrete: the consent layer was not built as a
+ * checkbox and then described as compliant afterwards. Each record already
+ * carries a purpose, the data types it covers, a validity window, a retention
+ * life and a revocation state, because a permission that cannot be scoped,
+ * expired, revoked and audited is not a permission. The artefact is a
+ * serialiser over fields that were always there.
+ *
+ * Nambikai is not an Account Aggregator and not a registered FIU. Every
+ * artefact says so, and none of them is signed.
+ */
+router.get(
+  '/artefacts',
+  asyncHandler(async (req, res) => {
+    const asOf = new Date();
+    const consents = await consentService.listConsents({
+      subjectType: SUBJECT_TYPE.USER,
+      subjectId: req.user.id,
+    });
+
+    res.json({
+      artefacts: consents.map((c) => consentArtefact(c, { user: req.user, asOf })),
+      note:
+        'Shaped to the RBI Account Aggregator consent artefact. Not issued by an AA, not signed. ' +
+        'In production the wallet ledger is fetched through an AA under exactly these terms.',
     });
   }),
 );

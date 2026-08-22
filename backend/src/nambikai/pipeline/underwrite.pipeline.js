@@ -33,6 +33,7 @@ import { applyRules } from '../engine/rules.js';
 import { emit } from '../engine/reasonCodes.js';
 import { buildExplainerContext } from '../ai/context.js';
 import { explainReport } from '../ai/explainer.js';
+import { ocenRoles } from '../depa.js';
 import { findPartner, PARTNER_DISCLAIMER } from '../partners.js';
 import { monthsBetween } from '../util/window.js';
 import { bpsToPct } from '../util/stats.js';
@@ -239,6 +240,10 @@ export async function buildUnderwritingReport({
     })),
     recommendation_text: explanation.text,
     explainer_source: explanation.source,
+    // Who did what, in OCEN's vocabulary. Naming the roles changes no
+    // behaviour — the LSP/lender split is already why this pipeline produces a
+    // risk band rather than an approval.
+    ocen: ocenRoles({ partner }),
     consent_ref: token.primaryConsentId,
     requested_by_partner_id: partnerId,
     partner_disclaimer: PARTNER_DISCLAIMER,

@@ -3,12 +3,12 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "A Paytm-style digital wallet that runs entirely on your own machine. All money is simulated in a local SQLite database \u2014 no bank, UPI or payment gateway is ever contacted.",
+  "description": "A Paytm-style digital wallet that runs entirely on your own machine. All money is simulated in a local SQLite database — no bank, UPI or payment gateway is ever contacted.",
   "scripts": {
     "setup": "npm run install:all && npm run env:init && npm run db:setup",
     "install:all": "npm install --prefix backend && npm install --prefix frontend",
     "env:init": "node scripts/init-env.js",
-    "db:setup": "npm run db:migrate && npm run db:seed",
+    "db:setup": "npm run db:generate && npm run db:migrate && npm run db:seed",
     "db:migrate": "npm --prefix backend run prisma:migrate",
     "db:seed": "npm --prefix backend run seed",
     "db:reset": "npm --prefix backend run prisma:reset && npm run db:seed",
@@ -17,7 +17,8 @@
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev",
     "test": "npm --prefix backend test",
-    "build": "npm --prefix frontend run build"
+    "build": "npm --prefix frontend run build",
+    "db:generate": "npm --prefix backend run prisma:generate"
   },
   "engines": {
     "node": ">=20.11"

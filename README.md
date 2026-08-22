@@ -43,18 +43,30 @@ That's the whole list. SQLite needs no installation — Prisma creates and manag
 
 ## Quick start
 
-From the project root, run these four commands:
+From the project root:
 
 ```bash
-npm run install:all   # install backend + frontend dependencies
-npm run env:init      # create both .env files and generate a JWT secret
-npm run db:setup      # create the SQLite database and seed demo data
-npm run dev           # start the API (:4000) and the web app (:5173)
+npm run setup   # install, create .env files, generate the client, migrate, seed
+npm run dev     # start the API (:4000) and the web app (:5173)
 ```
 
-Then open **<http://localhost:5173>**.
+Then open **<http://localhost:5173>** and sign in with any demo account below —
+the password for all of them is `password123`.
 
-> `npm run setup` runs the first three steps in one go if you prefer.
+`npm run setup` expands to these steps, which can also be run individually:
+
+```bash
+npm run install:all   # backend + frontend dependencies
+npm run env:init      # both .env files, with a generated JWT secret
+npm run db:generate   # generate the Prisma client
+npm run db:migrate    # create the SQLite database from the checked-in migrations
+npm run db:seed       # 18 months of simulated history for 10 personas
+```
+
+**The database is not in the repository, and neither are the `.env` files.**
+Both are created by `npm run setup`. The seed is deterministic — a
+`mulberry32` generator and UTC dates throughout — so every machine produces
+byte-identical history, and `npm run db:reset` restores it exactly.
 
 ### Sign in with a demo account
 

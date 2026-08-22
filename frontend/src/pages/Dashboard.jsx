@@ -20,10 +20,10 @@ const SERVICES = [
   { to: '/bills?category=ELECTRICITY', icon: 'bolt', label: 'Electricity\nBill' },
   { to: '/bills?category=BROADBAND', icon: 'wifi', label: 'Broadband\nBill' },
   { to: '/bills?category=GAS', icon: 'flame', label: 'Book Gas\nCylinder' },
+  { to: '/bills?category=DTH', icon: 'tv', label: 'DTH\nRecharge' },
   { to: '/passbook', icon: 'passbook', label: 'Balance &\nHistory' },
-  { to: '/nambikai', icon: 'shield', label: 'Nambikai\nTrust' },
-  { to: '/nambikai/borrow', icon: 'bank', label: 'Borrow' },
   { to: '/nambikai/groups', icon: 'users', label: 'Savings\nGroups' },
+  { to: '/nambikai/borrow', icon: 'bank', label: 'Borrow' },
 ];
 
 export default function Dashboard() {

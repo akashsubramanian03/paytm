@@ -16,6 +16,7 @@ export default function Profile() {
   const toast = useToast();
   const navigate = useNavigate();
   const { copied, copy } = useCopy();
+  const nambikaiScore = useAsync(() => api.nambikai.score(), []);
 
   const payCode = useAsync(() => api.payCode(), []);
 
@@ -195,7 +196,23 @@ export default function Profile() {
             <ListRow
               icon={<SettingIcon name="shield" />}
               title="Nambikai trust profile"
-              subtitle="Your score, and what a lender would see"
+              subtitle={
+                nambikaiScore.data?.score
+                  ? `${nambikaiScore.data.score.grade.charAt(0)}${nambikaiScore.data.score.grade
+                      .slice(1)
+                      .toLowerCase()} — what a lender would see`
+                  : 'Your score, and what a lender would see'
+              }
+              right={
+                nambikaiScore.data?.score ? (
+                  <span className="flex items-center gap-2">
+                    <span className="tnum text-[19px] font-bold leading-none text-navy">
+                      {nambikaiScore.data.score.value}
+                    </span>
+                    <Icon name="chevronRight" size={18} className="shrink-0 text-ink-faint" />
+                  </span>
+                ) : undefined
+              }
               onClick={() => {}}
             />
           </Link>

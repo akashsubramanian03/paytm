@@ -192,32 +192,6 @@ export default function NambikaiHome() {
         )}
 
         <Card>
-          <Link to="/nambikai/groups" className="block">
-            <ListRow
-              icon={
-                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-navy">
-                  <Icon name="users" size={19} />
-                </span>
-              }
-              title="Savings groups"
-              subtitle="Every contribution you keep becomes evidence"
-              onClick={() => {}}
-            />
-          </Link>
-          <div className="hairline" />
-          <Link to="/nambikai/borrow" className="block">
-            <ListRow
-              icon={
-                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-navy">
-                  <Icon name="bank" size={19} />
-                </span>
-              }
-              title="Borrow"
-              subtitle="What a partner would offer, and why that much"
-              onClick={() => {}}
-            />
-          </Link>
-          <div className="hairline" />
           <Link to="/nambikai/income-proof" className="block">
             <ListRow
               icon={
@@ -283,18 +257,6 @@ export default function NambikaiHome() {
             />
           </Link>
           <div className="hairline" />
-          <Link to="/nambikai/consent" className="block">
-            <ListRow
-              icon={
-                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-sky-50 text-navy">
-                  <Icon name="shield" size={19} />
-                </span>
-              }
-              title="Data & consent"
-              subtitle="See and change what Nambikai may read"
-              onClick={() => {}}
-            />
-          </Link>
         </Card>
 
         <MockBadge className="pb-3 pt-1">

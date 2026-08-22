@@ -145,7 +145,11 @@ export default function Borrow() {
               </span>
               <div className="min-w-0">
                 <p className="text-[15px] font-bold text-ink">{reason.headline}</p>
-                <p className="mt-1 text-[12.5px] leading-relaxed text-ink-muted">{reason.detail}</p>
+                {/* `explanation` is the written version of `detail`. It falls back to
+                    `detail` server-side, so this is never empty. */}
+                <p className="mt-1 text-[12.5px] leading-relaxed text-ink-muted">
+                  {reason.explanation ?? reason.detail}
+                </p>
               </div>
             </div>
 

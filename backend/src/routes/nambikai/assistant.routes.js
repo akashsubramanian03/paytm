@@ -85,6 +85,8 @@ router.post(
       context,
       // The model gets the scrubbed context; the templates get the numbers.
       richCodes: reasonCodes,
+      scoreId: score.id,
+      userId: req.user.id,
     });
 
     // A refused question read nothing, so it discloses nothing and is not logged

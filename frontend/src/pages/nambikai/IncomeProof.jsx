@@ -52,6 +52,13 @@ export default function IncomeProof() {
                 {p.period.from} to {p.period.to} · income in {p.period.monthsWithIncome} of{' '}
                 {p.period.monthsObserved} months
               </p>
+
+              {/* The plain-language version, for a reader who is not a lender. */}
+              {p.summary && (
+                <p className="mt-3 border-t border-line pt-3 text-[13px] leading-relaxed text-ink-muted">
+                  {p.summary}
+                </p>
+              )}
             </Card>
 
             <Card>

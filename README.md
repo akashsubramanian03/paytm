@@ -471,9 +471,14 @@ rather than a confident verdict built on two categories.
 - **The LLM never originates a number.** It is called after the score, band and
   gates already exist. A scrubbing guard runs before every API call and throws
   rather than sending anything containing amounts, balances, references, UPI
-  handles, phone numbers or emails. **With no `ANTHROPIC_API_KEY` the product is
+  handles, phone numbers or emails. **With no `OPENAI_API_KEY` the product is
   complete, not degraded** — deterministic templates write the prose, and every
   artifact records which wrote it.
+- **The key cannot be spent without limit.** Model prose is cached on the same
+  inputs hash the score is derived from, and both a daily and a per-user call
+  budget are enforced before the request. Exhausting either returns the template,
+  never an error — so running out of budget is indistinguishable from having no
+  key, which is a state the product already supports.
 - **The consent gate is in the data layer.** Feature extractors re-assert against
   a consent token before querying, so a missing permission stops the query being
   issued. Refusals are audited as carefully as reads.

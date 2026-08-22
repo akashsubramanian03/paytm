@@ -166,6 +166,8 @@ export async function buildUnderwritingReport({
   });
   const explanation = await explainReport(context, {
     richCodes: [...individualCodes, ...clusterCodes],
+    cacheKey: fv.inputsHash,
+    userId: actorId,
   });
 
   // 8. The payload, exactly as the caller receives it.

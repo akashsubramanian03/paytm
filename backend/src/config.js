@@ -36,14 +36,31 @@ const EnvSchema = z.object({
   // never overwrites an existing backend/.env, so a developer who set the file up
   // before Nambikai existed has none of these keys. A required var here would make
   // the whole wallet refuse to boot on their machine.
-  ANTHROPIC_API_KEY: z
+  OPENAI_API_KEY: z
     .string()
     .trim()
     .optional()
     .transform((v) => (v ? v : undefined)),
-  NAMBIKAI_AI_MODEL: z.string().trim().default('claude-opus-5'),
-  NAMBIKAI_AI_MAX_TOKENS: z.coerce.number().int().min(256).max(8000).default(1500),
+  NAMBIKAI_AI_MODEL: z.string().trim().default('gpt-4o'),
+  // Optional. Set it to reach an OpenAI-compatible endpoint instead — Azure
+  // OpenAI, a gateway, or a local mock. The AI tests use it to exercise the real
+  // request and response shape without a real key or a network call.
+  NAMBIKAI_AI_BASE_URL: z
+    .string()
+    .trim()
+    .url()
+    .optional()
+    .transform((v) => (v ? v : undefined)),
+  NAMBIKAI_AI_MAX_TOKENS: z.coerce.number().int().min(256).max(8000).default(500),
   NAMBIKAI_AI_TIMEOUT_MS: z.coerce.number().int().min(1000).max(60000).default(20000),
+
+  // Spend controls. The model is called on five surfaces, so an uncapped key in
+  // a demo that anyone can click through is a real bill. Every one of these
+  // degrades to the deterministic template rather than to an error, which is why
+  // they can be this blunt without hurting the product.
+  NAMBIKAI_AI_DAILY_CALL_BUDGET: z.coerce.number().int().min(0).default(150),
+  NAMBIKAI_AI_USER_CALL_BUDGET: z.coerce.number().int().min(0).default(25),
+  NAMBIKAI_AI_CACHE_SIZE: z.coerce.number().int().min(0).max(10_000).default(500),
   NAMBIKAI_ENGINE_VERSION: z.string().trim().default('nbk-1.0.0'),
   NAMBIKAI_SCORE_TTL_MINUTES: z.coerce.number().int().min(1).default(360),
 });
@@ -90,11 +107,15 @@ export const config = {
   nambikai: {
     // The demo is fully functional without an API key: the AI layer falls back to
     // deterministic templates. A key only upgrades the prose, never the numbers.
-    aiEnabled: Boolean(env.ANTHROPIC_API_KEY),
-    anthropicApiKey: env.ANTHROPIC_API_KEY,
+    aiEnabled: Boolean(env.OPENAI_API_KEY),
+    openaiApiKey: env.OPENAI_API_KEY,
+    baseUrl: env.NAMBIKAI_AI_BASE_URL,
     model: env.NAMBIKAI_AI_MODEL,
     maxTokens: env.NAMBIKAI_AI_MAX_TOKENS,
     timeoutMs: env.NAMBIKAI_AI_TIMEOUT_MS,
+    dailyCallBudget: env.NAMBIKAI_AI_DAILY_CALL_BUDGET,
+    userCallBudget: env.NAMBIKAI_AI_USER_CALL_BUDGET,
+    cacheSize: env.NAMBIKAI_AI_CACHE_SIZE,
     engineVersion: env.NAMBIKAI_ENGINE_VERSION,
     scoreTtlMinutes: env.NAMBIKAI_SCORE_TTL_MINUTES,
   },

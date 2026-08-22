@@ -72,10 +72,24 @@ Three mechanisms enforce this rather than one:
   risk value that is not in the facts it was given, the text is discarded and the
   deterministic template is returned instead.
 
-If no `ANTHROPIC_API_KEY` is set, everything still works: `ai/templates.js`
-produces the prose deterministically. Every report records `explainerSource` as
-`LLM` or `TEMPLATE`, and the UI shows it, so a reviewer always knows which wrote
-what.
+If no `OPENAI_API_KEY` is set, everything still works: `ai/templates.js` and
+`ai/prose.js` produce the prose deterministically. Every artifact records
+`explainerSource` as `LLM` or `TEMPLATE`, and the UI shows it, so a reviewer
+always knows which wrote what.
+
+The model writes on five surfaces: the underwriting recommendation
+(`ai/explainer.js`), the personal and SME assistants (`ai/assistant.js`), the
+borrowing decline and the income-proof summary (both `ai/prose.js`). The last two
+are the reason `ai/context.js` gained `buildDeclineContext` and
+`buildIncomeProofContext`: `noOfferReason` and an income proof are both built for
+the screen and carry raw paise, so passing either to the model directly throws
+`ContextLeakError`. A test asserts both the leak and the derived version, because
+the negative control is what shows the guard would really have caught it.
+
+`ai/budget.js` holds the spend controls — an LRU keyed on the same inputs hash the
+score uses, plus a daily and a per-user call budget. Every refusal returns `null`,
+which is the same thing a timeout, a rate limit or a missing key returns, so there
+is exactly one fallback path and it is the one that gets exercised.
 
 ## 4. Determinism
 

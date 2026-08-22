@@ -45,14 +45,29 @@ export function assertsWrongScore(text, score) {
   return false;
 }
 
-export async function explainReport(context, { richCodes } = {}) {
+/**
+ * @param {object} [opts]
+ * @param {Array}  [opts.richCodes] reason codes WITH their evidence numbers, for
+ *   the template path only. The model context deliberately strips them.
+ * @param {string} [opts.cacheKey] the feature vector's inputsHash. Quantised to
+ *   the UTC day already, so regenerating a report for the same person on the
+ *   same day reuses the paragraph instead of paying for it again.
+ * @param {string} [opts.userId] charged against this user's daily call budget.
+ */
+export async function explainReport(context, { richCodes, cacheKey, userId } = {}) {
   // The template needs the evidence numbers; the model deliberately does not get
   // them. Both work from the same code list.
   const templateContext = richCodes ? { ...context, reason_codes: richCodes } : context;
   const template = renderRecommendation(templateContext);
 
   assertContextClean(context);
-  const text = await callModel({ system: SYSTEM_PROMPT, payload: context });
+  const text = await callModel({
+    system: SYSTEM_PROMPT,
+    payload: context,
+    maxTokens: 500,
+    cacheKey: cacheKey && `report:${cacheKey}`,
+    userId,
+  });
 
   if (!text) return { text: template, source: EXPLAINER_SOURCE.TEMPLATE };
 

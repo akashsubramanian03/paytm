@@ -121,3 +121,72 @@ export function buildAssistantContext({ user, score, ruleResult, facts, isSme })
   assertContextClean(context);
   return context;
 }
+
+/**
+ * The borrowing decline, reduced to something the model may see.
+ *
+ * `noOfferReason` is built for the screen, not for a model: it carries
+ * `monthlyIncomePaise`, `committedPaise` and `ceilingPaise` verbatim. Every one
+ * of those trips the forbidden-key rule in guard.js, which is the intended
+ * behaviour — this builder is the only sanctioned way for a decline to reach the
+ * model, and the guard is what makes that a fact rather than a convention.
+ */
+export function buildDeclineContext({ user, score, reason, scenarios = [] }) {
+  const context = {
+    schema_version: 'nbk-decline-1',
+    subject: { display_name: shortName(user), type: 'USER' },
+    score: { value: score.value, grade: score.grade, band: score.band },
+    outcome: {
+      kind: reason.kind,
+      headline: reason.headline,
+      income_band: reason.incomeBand ?? null,
+      share_of_income_allowed_pct: reason.foirPct ?? null,
+      committed_band: bandRupees(reason.committedPaise),
+      ceiling_band: bandRupees(reason.ceilingPaise),
+      days_past_due: reason.daysPastDue ?? null,
+      overdue_count: reason.overdueCount ?? null,
+    },
+    paths: (reason.paths ?? []).map((p) => ({ key: p.key, label: p.label })),
+    what_would_change_it: scenarios.map((s) => ({
+      key: s.key ?? null,
+      label: s.label ?? null,
+      months_away: s.monthsAway ?? null,
+    })),
+    notes:
+      'This person was NOT offered a loan. Rupee figures are BANDS. Describe why and what would change it. Never state or imply that following these steps results in a loan.',
+  };
+
+  assertContextClean(context);
+  return context;
+}
+
+/**
+ * The income-proof summary.
+ *
+ * Deliberately thinner than it could be. This document is shown to a landlord or
+ * an employer, not a lender, so the model is given the shape of the income and
+ * nothing about creditworthiness — there is no score in this context at all, and
+ * it therefore has nothing to characterise the person with.
+ */
+export function buildIncomeProofContext({ user, proof }) {
+  const context = {
+    schema_version: 'nbk-income-proof-1',
+    subject: { display_name: shortName(user), type: 'USER' },
+    period: {
+      months_observed: proof.period.monthsObserved,
+      months_with_income: proof.period.monthsWithIncome,
+    },
+    income: {
+      typical_monthly_band: bandRupees(proof.income.medianMonthlyPaise),
+      quietest_month_band: bandRupees(proof.income.lowestMonthPaise),
+      busiest_month_band: bandRupees(proof.income.highestMonthPaise),
+      distinct_payers: proof.income.distinctPayers,
+      transaction_count: proof.income.transactionCount,
+    },
+    notes:
+      'This is a record of money received into one wallet, nothing more. Rupee figures are BANDS. Do not assess creditworthiness, do not mention loans or scores, and do not imply this is a salary declaration.',
+  };
+
+  assertContextClean(context);
+  return context;
+}

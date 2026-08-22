@@ -195,6 +195,9 @@ router.post(
       context,
       // The model gets the scrubbed context; the templates get the numbers.
       richCodes: result.scoreResult.reasonCodes,
+      // Already day-quantised (`sme-<id>-<yyyy-mm-dd>`), so it is a safe cache key.
+      scoreId: result.score.id,
+      userId: req.user.id,
     });
 
     res.json({

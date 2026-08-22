@@ -3,7 +3,7 @@
  *
  * The claim this layer makes is narrow and checkable: the model never sees raw
  * financial records, and it never originates a number. These tests are the
- * evidence for both. They run with no ANTHROPIC_API_KEY, which is also the
+ * evidence for both. They run with no OPENAI_API_KEY, which is also the
  * state the demo ships in — so they additionally prove the product is complete
  * without a model, not merely degraded.
  */
@@ -16,7 +16,7 @@ import { bandRupees, shortName, buildExplainerContext } from '../src/nambikai/ai
 import { renderRecommendation, renderPersonalSummary, renderAnswer } from '../src/nambikai/ai/templates.js';
 import { explainReport, assertsWrongScore } from '../src/nambikai/ai/explainer.js';
 import { answerQuestion } from '../src/nambikai/ai/assistant.js';
-import { isAiEnabled, getAnthropic } from '../src/nambikai/ai/client.js';
+import { isAiEnabled, getClient } from '../src/nambikai/ai/client.js';
 
 const CLEAN_CONTEXT = {
   schema_version: 'nbk-explainer-1',
@@ -140,7 +140,7 @@ describe('the assistant stays in its lane', () => {
     assert.equal(result.text, REFUSAL_TEXT);
     assert.equal(result.source, 'TEMPLATE');
     // The client is unavailable in this environment, so no call was possible.
-    assert.equal(await getAnthropic(), null);
+    assert.equal(await getClient(), null);
   });
 });
 

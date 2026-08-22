@@ -15,6 +15,7 @@ import { EXPLAINER_SOURCE } from '../constants.js';
 import { assertContextClean } from './guard.js';
 import { callModel } from './client.js';
 import { classifyIntent, REFUSAL_TEXT } from './intents.js';
+import { sha256Hex } from '../util/hash.js';
 import { renderAnswer } from './templates.js';
 
 const SYSTEM_PROMPT = `You are the Nambikai assistant inside the Paytm app. You help one person understand their own money.
@@ -49,7 +50,21 @@ function assertsWrongScore(text, score) {
  *   undefined". Both paths work from the same code list; only the templates see
  *   the figures.
  */
-export async function answerQuestion({ question, history = [], context, richCodes }) {
+/**
+ * A repeated question about unchanged facts has one right answer, so it is worth
+ * caching — but only the first turn of a conversation. Once there is history the
+ * answer depends on what was said before, and two people asking the same thing
+ * after different conversations should not receive the same paragraph.
+ *
+ * The suggested prompts on the assistant screen are canned and get clicked
+ * repeatedly in a demo, which is exactly the case this pays for.
+ */
+function cacheKeyFor({ scoreId, question, history }) {
+  if (!scoreId || history.length > 0) return null;
+  return `ask:${sha256Hex(`${scoreId}|${question.trim().toLowerCase()}`)}`;
+}
+
+export async function answerQuestion({ question, history = [], context, richCodes, scoreId, userId }) {
   const { matched, onTopic } = classifyIntent(question);
 
   // Refused before any network call.
@@ -78,7 +93,13 @@ export async function answerQuestion({ question, history = [], context, richCode
   };
   assertContextClean(payload);
 
-  const text = await callModel({ system: SYSTEM_PROMPT, payload, maxTokens: 600 });
+  const text = await callModel({
+    system: SYSTEM_PROMPT,
+    payload,
+    maxTokens: 400,
+    cacheKey: cacheKeyFor({ scoreId, question, history }),
+    userId,
+  });
 
   if (!text) {
     return {

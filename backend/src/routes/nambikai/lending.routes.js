@@ -13,6 +13,8 @@ import { validate } from '../../middleware/validate.js';
 import { balance, ledgerEntry } from '../../lib/serialize.js';
 import { KYC_ID_TYPE, LOAN_PURPOSE } from '../../nambikai/constants.js';
 import { PARTNER_DISCLAIMER } from '../../nambikai/partners.js';
+import { buildDeclineContext, buildIncomeProofContext } from '../../nambikai/ai/context.js';
+import { explainDecline, summariseIncomeProof } from '../../nambikai/ai/prose.js';
 import { assessEligibility, applyForLoan, acceptOffer } from '../../nambikai/pipeline/loan.pipeline.js';
 import {
   forecastNextInstallment,
@@ -80,14 +82,44 @@ router.get(
       requestedPaise: req.valid.query.amount ? req.valid.query.amount * 100 : undefined,
     });
 
+    const score = {
+      value: result.scoreResult.score,
+      grade: result.scoreResult.grade,
+      band: result.ruleResult.band,
+    };
+
+    // Being told no is the moment the wording matters most, so it is the one
+    // place on this route worth a model call. Only when there is actually a
+    // decline to explain — an accepted applicant costs nothing.
+    let declineProse = null;
+    if (result.noOfferReason) {
+      declineProse = await explainDecline({
+        context: buildDeclineContext({
+          user: req.user,
+          score,
+          reason: result.noOfferReason,
+          scenarios: result.whatWouldHelp?.scenarios ?? [],
+        }),
+        fallback: result.noOfferReason.detail,
+        cacheKey: result.fv.inputsHash,
+        userId: req.user.id,
+      });
+    }
+
     res.json({
       eligible: result.eligible,
-      score: { value: result.scoreResult.score, grade: result.scoreResult.grade, band: result.ruleResult.band },
+      score,
       gates: result.ruleResult.gates.filter((g) => g.triggered).map((g) => ({ code: g.code, effect: g.effect })),
       bestOffer: result.offers[0] ? offerView(result.offers[0]) : null,
       offerCount: result.offers.length,
       // Being at capacity is not a rejection, and the response says which it is.
-      noOfferReason: result.noOfferReason,
+      noOfferReason: result.noOfferReason && {
+        ...result.noOfferReason,
+        // The template text stays in `detail` untouched; this is additive, so a
+        // client that never reads it behaves exactly as it did before.
+        explanation: declineProse.text,
+        explainerSource: declineProse.source,
+      },
       // Only present when there is nothing on offer — and then it is the point
       // of the response, not a consolation.
       whatWouldHelp: result.whatWouldHelp,
@@ -309,7 +341,18 @@ router.get(
       requestId: req.requestId,
       actorId: req.user.id,
     });
-    res.json({ proof });
+
+    // verificationHash is already quantised to the UTC day, so reopening this
+    // document costs nothing after the first view.
+    const summary = await summariseIncomeProof({
+      context: buildIncomeProofContext({ user: req.user, proof }),
+      cacheKey: proof.verificationHash,
+      userId: req.user.id,
+    });
+
+    res.json({
+      proof: { ...proof, summary: summary.text, explainerSource: summary.source },
+    });
   }),
 );
 

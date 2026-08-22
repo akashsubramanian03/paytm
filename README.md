@@ -396,6 +396,9 @@ below the viewfinder always works: paste a pay code, or type a UPI ID like
 
 ## Nambikai — the trust layer
 
+> **Full end-to-end reference: [NAMBIKAI.md](NAMBIKAI.md)** — every layer, every
+> endpoint, the data model, the seed, the tests, and what is deliberately not real.
+
 **Nambikai** (நம்பிக்கை, Tamil for *trust*) sits on top of this wallet. It turns
 behaviour that already happens — savings-circle contributions, wallet activity,
 bills paid on time — into an explainable financial identity for people a credit
